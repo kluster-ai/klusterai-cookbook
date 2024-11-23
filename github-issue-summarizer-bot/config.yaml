@@ -4,7 +4,7 @@ klusterai:
 
 github:
   owner: "ADD-YOUR-OWNER-HERE"
-  repo: "ADD-YOUR-REPO-HERE"
+  repo: null
 
 slack:
   channel: "ADD-YOUR-CHANNEL-HERE"

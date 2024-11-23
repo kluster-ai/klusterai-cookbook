@@ -105,7 +105,7 @@ kluster:
 
 github:
   owner: "your-github-org"
-  repo: "your-repo-name"
+  repo: null
 
 slack:
   channel: "your-slack-channel"
@@ -113,6 +113,10 @@ slack:
 limits:
   input_tokens: 100000
 ```
+
+Note: You can choose between two modes:
+- **Single Repository**: Set a specific repository name in the `repo` field
+- **Organization-wide**: Leave the `repo` field as `null` to process issues from all repositories in your organization
 
 ### 5. Try!
 Before setting up automation, let's test the script manually:
@@ -359,3 +363,30 @@ def post_to_slack(channel: str, text: str, token: str):
         if error == "not_in_channel":
             print("The bot is not in the channel. Please invite the bot to the channel.")
 ```
+
+## Organization-wide Monitoring
+
+This tool can monitor issues across all repositories in your GitHub organization. To enable this:
+
+1. Set the `repo` field to null in your `config.yaml`:
+```yaml
+github:
+  owner: "your-github-org"
+  repo: null
+```
+
+2. Ensure your GitHub token has appropriate permissions:
+   - For public repositories: `public_repo` scope is sufficient
+   - For private repositories: `repo` scope is required
+   - The `read:org` scope is required to list organization repositories
+
+When running in organization-wide mode, the tool will:
+1. First fetch all accessible repositories in your organization
+2. Then check for new issues in each repository since the last run
+3. Group the summaries by repository when posting to Slack
+
+This is particularly useful for:
+- Organizations with many active repositories
+- Teams that need to monitor issue activity across multiple projects
+- Managers tracking engagement across an organization
+

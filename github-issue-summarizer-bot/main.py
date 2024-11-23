@@ -21,13 +21,14 @@ def load_config(config_path: str = 'config.yaml', env_path: str = None):
     Returns:
         dict: Loaded configuration
     """
-    # If env_path is provided, use it directly
+    # Load environment variables
     if env_path:
-        load_dotenv(env_path)
+        print(f"Loading environment variables from {env_path}")
+        load_dotenv(env_path, override=True)
     else:
         # Use same name as config file but with .env extension
         env_file = Path(config_path).with_suffix('.env')
-        load_dotenv(env_file)
+        load_dotenv(env_file, override=True)
     
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
@@ -93,9 +94,50 @@ def update_last_run_time(config_path: str = 'config.yaml'):
     with open(last_run_file, 'w') as f:
         f.write(str(time.time()))
 
+def fetch_org_repos(owner: str, headers: dict) -> list:
+    """
+    Fetches all repositories for an organization.
+    
+    Args:
+        owner: GitHub organization name
+        headers: Request headers including authentication
+        
+    Returns:
+        list: List of repository names
+    """
+    github_url = f"https://api.github.com/orgs/{owner}/repos"
+    repos = []
+    page = 1
+    
+    while True:
+        try:
+            response = requests.get(
+                github_url, 
+                headers=headers,
+                params={
+                    "page": page, 
+                    "per_page": 100,
+                    "type": "all"
+                }
+            )
+            response.raise_for_status()
+            page_repos = response.json()
+            
+            if not page_repos:
+                break
+                
+            repos.extend([repo["name"] for repo in page_repos])
+            page += 1
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching organization repositories: {e}")
+            return []
+            
+    return repos
+
 def fetch_github_issues(config_path: str = 'config.yaml') -> list:
     """
     Fetches GitHub issues created or updated since the last run time.
+    If no specific repo is configured, fetches from all repos in the org.
     
     Args:
         config_path: Path to the config file for unique last_run tracking
@@ -104,29 +146,46 @@ def fetch_github_issues(config_path: str = 'config.yaml') -> list:
         list: List of GitHub issue objects containing title, body, comments_url, etc.
     """
     since = get_last_run_time(config_path)
-    github_url = f"https://api.github.com/repos/{CONFIG['github']['owner']}/{CONFIG['github']['repo']}/issues"
     headers = {"Authorization": f"token {CONFIG['github']['token']}"}
-    params = {"since": since.isoformat()}
     
-    issues = []
-    page = 1
-    while True:
-        params["page"] = page
-        try:
-            response = requests.get(github_url, headers=headers, params=params)
-            response.raise_for_status()
-            page_issues = response.json()
-            
-            if not page_issues:
-                break
-            
-            issues.extend(page_issues)
-            page += 1
-        except requests.exceptions.RequestException as e:
-            print(f"Error fetching GitHub issues: {e}")
-            return []
+    all_issues = []
+    repos_to_check = []
     
-    return issues
+    # If specific repo is configured, use it; otherwise fetch all org repos
+    if CONFIG['github']['repo']:
+        repos_to_check = [CONFIG['github']['repo']]
+    else:
+        repos_to_check = fetch_org_repos(CONFIG['github']['owner'], headers)
+        print(f"Found {len(repos_to_check)} repositories in organization")
+    
+    for repo in repos_to_check:
+        github_url = f"https://api.github.com/repos/{CONFIG['github']['owner']}/{repo}/issues"
+        params = {"since": since.isoformat()}
+        page = 1
+        
+        while True:
+            params["page"] = page
+            try:
+                response = requests.get(github_url, headers=headers, params=params)
+                response.raise_for_status()
+                page_issues = response.json()
+                
+                if not page_issues:
+                    break
+                
+                # Add repo name to each issue for better context
+                for issue in page_issues:
+                    issue['repository_name'] = repo
+                
+                all_issues.extend(page_issues)
+                page += 1
+            except requests.exceptions.RequestException as e:
+                print(f"Error fetching GitHub issues for repo {repo}: {e}")
+                continue
+                
+        print(f"Found {len(all_issues)} issues in {repo}")
+    
+    return all_issues
 
 def fetch_issue_comments(comments_url: str, headers: dict, tokenizer) -> str:
     """
@@ -175,6 +234,7 @@ def prepare_klusterai_job(issues: list, tokenizer) -> list:
         title = issue.get("title", "")
         body = issue.get("body", "")
         issue_url = issue.get("html_url", "")
+        repo_name = issue.get("repository_name", "")
         
         comments_text = ""
         if issue.get("comments", 0) > 0:
@@ -199,12 +259,13 @@ def prepare_klusterai_job(issues: list, tokenizer) -> list:
                         "This means a single * for making titles bold. NEVER use ** for bolding text. "
                         "When formatting code blocks, use triple backticks without specifying the language name."
                     )},
-                    {"role": "user", "content": f"Title: {title}. Body: {body}. Comments: {comments_text}"},
+                    {"role": "user", "content": f"Repository: {repo_name}\nTitle: {title}\nBody: {body}\nComments: {comments_text}"},
                 ],
             },
             "metadata": {
                 "issue_url": issue_url,
-                "title": title
+                "title": title,
+                "repo_name": repo_name
             }
         }
         tasks.append(task)
@@ -370,35 +431,45 @@ def post_to_slack(channel: str, text: str, token: str):
 def process_and_post_results():
     """
     Processes batch results and posts them to Slack.
-    
-    Reads the batch input and output files, matches results with their
-    corresponding GitHub issues, and combines all summaries into a single message
-    before chunking and posting to Slack if necessary.
+    Results are grouped by repository.
     """
     today_date = datetime.now().strftime("%B %d, %Y")
     issue_url_map = {}
+    repo_results = {}
     
     # Create issue URL map
     with open("batch_input.jsonl", "r") as input_file:
         for line in input_file:
             task = json.loads(line)
             custom_id = task.get("custom_id", "N/A")
-            issue_url = task.get("metadata", {}).get("issue_url", "No URL available")
-            title = task.get("metadata", {}).get("title", "")
-            issue_url_map[custom_id] = (issue_url, title)
+            metadata = task.get("metadata", {})
+            issue_url_map[custom_id] = (
+                metadata.get("issue_url", "No URL available"),
+                metadata.get("title", ""),
+                metadata.get("repo_name", "unknown")
+            )
     
-    # Combine all results into one message
-    combined_message = f"*Latest {CONFIG['github']['repo']} Updates ({today_date})*\n\n"
-    
-    # Process results and combine them
+    # Process results and organize by repository
     with open("batch_results.jsonl", "r") as output_file:
         for line in output_file:
             result = json.loads(line)
             custom_id = result.get("custom_id", "N/A")
             response_content = result.get("response", {}).get("body", {}).get("choices", [{}])[0].get("message", {}).get("content", "No content available")
-            issue_url, title = issue_url_map.get(custom_id, ("No URL available", "No title available"))
+            issue_url, title, repo_name = issue_url_map.get(custom_id, ("No URL available", "No title available", "unknown"))
             
-            combined_message += f"*Title:* <{issue_url}|[{title}]>\n{response_content}\n\n"
+            if repo_name not in repo_results:
+                repo_results[repo_name] = []
+            
+            repo_results[repo_name].append(f"*Title:* <{issue_url}|[{title}]>\n{response_content}\n")
+    
+    # Create combined message grouped by repository
+    org_name = CONFIG['github']['owner']
+    combined_message = f"*Latest Updates for {org_name} ({today_date})*\n\n"
+    
+    for repo_name, summaries in repo_results.items():
+        combined_message += f"*Repository: {repo_name}*\n"
+        combined_message += "".join(summaries)
+        combined_message += "\n"
     
     # Split into chunks if necessary and post
     chunks = chunk_message(combined_message)
