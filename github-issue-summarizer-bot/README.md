@@ -263,7 +263,7 @@ def prepare_klusterai_job(issues: list, tokenizer) -> list:
 ```
 
 ### 3. Submit Batch Job
-Issues are sent to Kluster.ai's API for summarization.
+The requests that have just been prepared are are sent to kluster.ai's Batch API for summarization.
 
 ```python
 def submit_klusterai_job(tasks: list, file_name: str = "batch_input.jsonl"):
