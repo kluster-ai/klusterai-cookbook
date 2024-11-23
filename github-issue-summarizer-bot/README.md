@@ -157,13 +157,6 @@ Make the run script executable:
 chmod +x run_github_report.sh
 ```
 
-Update the base directory in `run_github_report.sh`:
-```bash
-BASE_DIR="/path/to/your/github-summarizer"
-```
-
-
-
 ### 7. Scheduling
 Add a cron job to run the script periodically:
 ```bash
