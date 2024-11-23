@@ -290,9 +290,44 @@ def save_results(batch_status, client) -> bool:
         print(f"Batch failed with status: {batch_status.status}")
         return False
 
+def chunk_message(text: str, limit: int = 40000) -> list:
+    """
+    Splits a message into chunks that respect Slack's character limit.
+    
+    Args:
+        text: Message text to split
+        limit: Character limit per message (default 40000)
+        
+    Returns:
+        list: List of message chunks
+    """
+    if len(text) <= limit:
+        return [text]
+    
+    chunks = []
+    current_chunk = ""
+    
+    # Split by newlines to avoid breaking in middle of lines
+    lines = text.split('\n')
+    
+    for line in lines:
+        if len(current_chunk) + len(line) + 1 <= limit:
+            current_chunk += line + '\n'
+        else:
+            # If current chunk is not empty, add it to chunks
+            if current_chunk:
+                chunks.append(current_chunk.rstrip())
+            current_chunk = line + '\n'
+    
+    # Add the last chunk if not empty
+    if current_chunk:
+        chunks.append(current_chunk.rstrip())
+    
+    return chunks
+
 def post_to_slack(channel: str, text: str, token: str):
     """
-    Posts a message to a Slack channel.
+    Posts a message to a Slack channel, breaking into multiple messages if needed.
     
     Args:
         channel: Name of the Slack channel
@@ -307,28 +342,38 @@ def post_to_slack(channel: str, text: str, token: str):
         "Content-Type": "application/json",
         "Authorization": f"Bearer {token}"
     }
-    data = {
-        "channel": channel,
-        "text": text,
-        "unfurl_links": False,
-        "unfurl_media": False
-    }
-    response = requests.post(slack_url, headers=headers, json=data)
-    response_data = response.json()
     
-    if not response_data.get("ok"):
-        error = response_data.get("error", "Unknown error")
-        print(f"Failed to send message to Slack: {error}")
-        if error == "not_in_channel":
-            print("The bot is not in the channel. Please invite the bot to the channel.")
+    # Split message into chunks if needed
+    chunks = chunk_message(text)
+    
+    for chunk in chunks:
+        data = {
+            "channel": channel,
+            "text": chunk,
+            "unfurl_links": False,
+            "unfurl_media": False
+        }
+        response = requests.post(slack_url, headers=headers, json=data)
+        response_data = response.json()
+        
+        if not response_data.get("ok"):
+            error = response_data.get("error", "Unknown error")
+            print(f"Failed to send message to Slack: {error}")
+            if error == "not_in_channel":
+                print("The bot is not in the channel. Please invite the bot to the channel.")
+            break  # Stop sending chunks if there's an error
+        
+        # Add a small delay between chunks to avoid rate limiting
+        if len(chunks) > 1:
+            time.sleep(1)
 
 def process_and_post_results():
     """
     Processes batch results and posts them to Slack.
     
     Reads the batch input and output files, matches results with their
-    corresponding GitHub issues, and posts formatted summaries to Slack.
-    Each issue is posted as a separate message with its title and URL.
+    corresponding GitHub issues, and combines all summaries into a single message
+    before chunking and posting to Slack if necessary.
     """
     today_date = datetime.now().strftime("%B %d, %Y")
     issue_url_map = {}
@@ -342,14 +387,10 @@ def process_and_post_results():
             title = task.get("metadata", {}).get("title", "")
             issue_url_map[custom_id] = (issue_url, title)
     
-    # Post title to Slack
-    post_to_slack(
-        CONFIG['slack']['channel'], 
-        f"*Latest {CONFIG['github']['repo']} Updates ({today_date})*", 
-        CONFIG['slack']['token']
-    )
+    # Combine all results into one message
+    combined_message = f"*Latest {CONFIG['github']['repo']} Updates ({today_date})*\n\n"
     
-    # Process results and post each one
+    # Process results and combine them
     with open("batch_results.jsonl", "r") as output_file:
         for line in output_file:
             result = json.loads(line)
@@ -357,8 +398,12 @@ def process_and_post_results():
             response_content = result.get("response", {}).get("body", {}).get("choices", [{}])[0].get("message", {}).get("content", "No content available")
             issue_url, title = issue_url_map.get(custom_id, ("No URL available", "No title available"))
             
-            formatted_result = f"*Title:* <{issue_url}|[{title}]>\n{response_content}\n\n"
-            post_to_slack(CONFIG['slack']['channel'], formatted_result, CONFIG['slack']['token'])
+            combined_message += f"*Title:* <{issue_url}|[{title}]>\n{response_content}\n\n"
+    
+    # Split into chunks if necessary and post
+    chunks = chunk_message(combined_message)
+    for chunk in chunks:
+        post_to_slack(CONFIG['slack']['channel'], chunk, CONFIG['slack']['token'])
     
     print(f"Results have been processed and posted to Slack channel {CONFIG['slack']['channel']}")
 
