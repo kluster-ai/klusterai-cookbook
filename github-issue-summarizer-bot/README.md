@@ -3,7 +3,7 @@
 This guide will help you set up a Slack bot that leverages kluster.ai's Batch API to efficiently process multiple GitHub issues in batch. Using the state-of-the-art Meta Llama 3.1 405B model, it periodically collects new issues since the last run and processes them as a single batch job, offering several key advantages:
 
 - **Efficient Processing**: Rather than making individual API calls for each issue, the batch API allows simultaneous processing of multiple issues in one request
-- **Cost Effective**: Batch processing typically offers better scalability compared to individual API calls
+- **Cost Effective**: Batch processing offers better prices and scalability compared to individual API calls
 - **Rate Limit Friendly**: Real-time APIs often have strict limits on requests/tokens per minute/hour - batch processing helps stay within these constraints
 - **Automated Workflow**: Set it and forget it - the bot automatically collects issues since its last run and processes them in batches
 
