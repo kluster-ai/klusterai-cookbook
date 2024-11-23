@@ -62,33 +62,48 @@ def calculate_tokens(text, tokenizer):
     """
     return len(tokenizer.encode(text))
 
-def get_last_run_time() -> datetime:
+def get_last_run_time(config_path: str = 'config.yaml') -> datetime:
     """
-    Retrieves the timestamp of the last successful run.
+    Retrieves the timestamp of the last successful run for a specific config.
     
+    Args:
+        config_path: Path to the config file to create unique last_run file
+        
     Returns:
         datetime: Timestamp of last run, or 24 hours ago if no record exists
     """
+    # Create a last_run file specific to this config
+    last_run_file = Path(config_path).with_suffix('.last_run')
     try:
-        with open('.last_run', 'r') as f:
+        with open(last_run_file, 'r') as f:
             timestamp = float(f.read().strip())
             return datetime.fromtimestamp(timestamp)
     except (FileNotFoundError, ValueError):
         # If file doesn't exist or is invalid, default to 24 hours ago
         return datetime.now() - timedelta(days=1)
 
-def update_last_run_time():
-    with open('.last_run', 'w') as f:
+def update_last_run_time(config_path: str = 'config.yaml'):
+    """
+    Updates the last run timestamp for a specific config file.
+    
+    Args:
+        config_path: Path to the config file to create unique last_run file
+    """
+    last_run_file = Path(config_path).with_suffix('.last_run')
+    with open(last_run_file, 'w') as f:
         f.write(str(time.time()))
 
-def fetch_github_issues() -> list:
+def fetch_github_issues(config_path: str = 'config.yaml') -> list:
     """
     Fetches GitHub issues created or updated since the last run time.
     
+    Args:
+        config_path: Path to the config file for unique last_run tracking
+        
     Returns:
         list: List of GitHub issue objects containing title, body, comments_url, etc.
     """
-    since = get_last_run_time()
+    since = get_last_run_time(config_path)
     github_url = f"https://api.github.com/repos/{CONFIG['github']['owner']}/{CONFIG['github']['repo']}/issues"
     headers = {"Authorization": f"token {CONFIG['github']['token']}"}
     params = {"since": since.isoformat()}
@@ -195,12 +210,13 @@ def prepare_klusterai_job(issues: list, tokenizer) -> list:
         tasks.append(task)
     return tasks
 
-def submit_klusterai_job(tasks: list, file_name: str = "batch_input.jsonl"):
+def submit_klusterai_job(tasks: list, config_path: str = 'config.yaml', file_name: str = "batch_input.jsonl"):
     """
     Submits a batch processing job to kluster.ai and monitors its completion.
     
     Args:
         tasks: List of task dictionaries to process
+        config_path: Path to the config file for unique last_run tracking
         file_name: Name of the temporary JSONL file to store tasks
         
     Returns:
@@ -231,8 +247,8 @@ def submit_klusterai_job(tasks: list, file_name: str = "batch_input.jsonl"):
     )
     print(f"Batch request submitted. Batch ID: {response.id}")
 
-    # so we know when the last issues in this batch were processed
-    update_last_run_time() 
+    # Update the last run time with the specific config
+    update_last_run_time(config_path) 
 
     # Monitor batch status
     while True:
@@ -359,19 +375,17 @@ def main():
     global CONFIG
     CONFIG = load_config(args.config, args.env)
     
-    # get latest GitHub issues
-    issues = fetch_github_issues()
+    # Pass config path to functions that need it
+    issues = fetch_github_issues(args.config)
     if len(issues) == 0:
         print("No new issues to report")
         return
     
-    # prepare batch job
     tasks = prepare_klusterai_job(issues, tokenizer)
     
-    # submit batch job
-    batch_status = submit_klusterai_job(tasks)
+    # Pass config path to submit_klusterai_job
+    batch_status = submit_klusterai_job(tasks, args.config)
     
-    # process results and post to slack
     if batch_status.status.lower() == "completed":
         process_and_post_results()
 
