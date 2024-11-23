@@ -22,7 +22,12 @@ pip install -r requirements.txt
 ```
 
 ### 2. Environment Configuration
-Create a `.env` file in the root directory with the following variables:
+You have two options for environment configuration:
+
+1. Create a `.env` file alongside your `config.yaml` (default behavior)
+2. Specify a custom `.env` file location using the `--env` flag when running the script
+
+Your `.env` file should contain:
 ```bash
 KLUSTERAI_API_KEY=your_klusterai_api_key
 GH_TOKEN=your_github_personal_access_token

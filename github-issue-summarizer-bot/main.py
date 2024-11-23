@@ -7,11 +7,29 @@ from datetime import datetime, timedelta
 import tiktoken
 import yaml
 from dotenv import load_dotenv
+import argparse
+from pathlib import Path
 
-def load_config():
-    load_dotenv()
+def load_config(config_path: str = 'config.yaml', env_path: str = None):
+    """
+    Loads configuration from a YAML file and corresponding environment file.
     
-    with open('config.yaml', 'r') as f:
+    Args:
+        config_path: Path to the YAML config file
+        env_path: Optional path to specific .env file
+        
+    Returns:
+        dict: Loaded configuration
+    """
+    # If env_path is provided, use it directly
+    if env_path:
+        load_dotenv(env_path)
+    else:
+        # Use same name as config file but with .env extension
+        env_file = Path(config_path).with_suffix('.env')
+        load_dotenv(env_file)
+    
+    with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
     
     config['klusterai']['api_key'] = os.getenv("KLUSTERAI_API_KEY")
@@ -329,6 +347,18 @@ def process_and_post_results():
     print(f"Results have been processed and posted to Slack channel {CONFIG['slack']['channel']}")
 
 def main():
+    parser = argparse.ArgumentParser(description='GitHub Issue Summarizer')
+    parser.add_argument('--config', 
+                       default='config.yaml',
+                       help='Path to the YAML configuration file')
+    parser.add_argument('--env',
+                       help='Path to the environment file (optional)')
+    args = parser.parse_args()
+    
+    # Load config based on provided paths
+    global CONFIG
+    CONFIG = load_config(args.config, args.env)
+    
     # get latest GitHub issues
     issues = fetch_github_issues()
     if len(issues) == 0:
