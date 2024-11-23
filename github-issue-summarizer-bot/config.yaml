@@ -1,0 +1,13 @@
+klusterai:
+  base_url: "http://api.kluster.ai/v1"
+  model: "klusterai/Meta-Llama-3.1-405B-Instruct-Turbo"
+
+github:
+  owner: "ADD-YOUR-OWNER-HERE"
+  repo: "ADD-YOUR-REPO-HERE"
+
+slack:
+  channel: "ADD-YOUR-CHANNEL-HERE"
+
+limits:
+  input_tokens_per_request: 100000 
