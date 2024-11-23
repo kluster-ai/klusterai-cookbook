@@ -30,6 +30,7 @@ def load_config(config_path: str = 'config.yaml', env_path: str = None):
         env_file = Path(config_path).with_suffix('.env')
         load_dotenv(env_file, override=True)
     
+    print(f"Loading config from {config_path}")
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
     
@@ -38,11 +39,6 @@ def load_config(config_path: str = 'config.yaml', env_path: str = None):
     config['slack']['token'] = os.getenv("SLACK_TOKEN")
     
     return config
-
-CONFIG = load_config()
-
-# Lets leave some room for output tokens
-INPUT_TOKEN_LIMIT = CONFIG['limits']['input_tokens_per_request']
 
 def setup_tokenizer():
     # estimate for simplicity..
@@ -134,7 +130,7 @@ def fetch_org_repos(owner: str, headers: dict) -> list:
             
     return repos
 
-def fetch_github_issues(config_path: str = 'config.yaml') -> list:
+def fetch_github_issues(config: dict, config_path: str = 'config.yaml') -> list:
     """
     Fetches GitHub issues created or updated since the last run time.
     If no specific repo is configured, fetches from all repos in the org.
@@ -146,20 +142,20 @@ def fetch_github_issues(config_path: str = 'config.yaml') -> list:
         list: List of GitHub issue objects containing title, body, comments_url, etc.
     """
     since = get_last_run_time(config_path)
-    headers = {"Authorization": f"token {CONFIG['github']['token']}"}
+    headers = {"Authorization": f"token {config['github']['token']}"}
     
     all_issues = []
     repos_to_check = []
     
     # If specific repo is configured, use it; otherwise fetch all org repos
-    if CONFIG['github']['repo']:
-        repos_to_check = [CONFIG['github']['repo']]
+    if config['github']['repo']:
+        repos_to_check = [config['github']['repo']]
     else:
-        repos_to_check = fetch_org_repos(CONFIG['github']['owner'], headers)
+        repos_to_check = fetch_org_repos(config['github']['owner'], headers)
         print(f"Found {len(repos_to_check)} repositories in organization")
     
     for repo in repos_to_check:
-        github_url = f"https://api.github.com/repos/{CONFIG['github']['owner']}/{repo}/issues"
+        github_url = f"https://api.github.com/repos/{config['github']['owner']}/{repo}/issues"
         params = {"since": since.isoformat()}
         page = 1
         
@@ -218,7 +214,7 @@ def fetch_issue_comments(comments_url: str, headers: dict, tokenizer) -> str:
     
     return comments_text
 
-def prepare_klusterai_job(issues: list, tokenizer) -> list:
+def prepare_klusterai_job(config: dict, issues: list, tokenizer) -> list:
     """
     Prepares a list of requests for kluster.ai batch processing.
     
@@ -240,7 +236,7 @@ def prepare_klusterai_job(issues: list, tokenizer) -> list:
         if issue.get("comments", 0) > 0:
             comments_text = fetch_issue_comments(
                 issue.get("comments_url", ""),
-                {"Authorization": f"token {CONFIG['github']['token']}"},
+                {"Authorization": f"token {config['github']['token']}"},
                 tokenizer
             )
 
@@ -249,7 +245,7 @@ def prepare_klusterai_job(issues: list, tokenizer) -> list:
             "method": "POST",
             "url": "/v1/chat/completions",
             "body": {
-                "model": CONFIG['klusterai']['model'],
+                "model": config['klusterai']['model'],
                 "messages": [
                     {"role": "system", "content": (
                         "You are a helpful assistant that summarizes GitHub issues. "
@@ -271,7 +267,7 @@ def prepare_klusterai_job(issues: list, tokenizer) -> list:
         tasks.append(task)
     return tasks
 
-def submit_klusterai_job(tasks: list, config_path: str = 'config.yaml', file_name: str = "batch_input.jsonl"):
+def submit_klusterai_job(config: dict, tasks: list, config_path: str = 'config.yaml', file_name: str = "batch_input.jsonl"):
     """
     Submits a batch processing job to kluster.ai and monitors its completion.
     
@@ -289,8 +285,8 @@ def submit_klusterai_job(tasks: list, config_path: str = 'config.yaml', file_nam
             file.write(json.dumps(task) + "\n")
 
     client = OpenAI(
-        api_key=CONFIG['klusterai']['api_key'],
-        base_url=CONFIG['klusterai']['base_url']
+        api_key=config['klusterai']['api_key'],
+        base_url=config['klusterai']['base_url']
     )
 
     # Upload batch file
@@ -428,7 +424,7 @@ def post_to_slack(channel: str, text: str, token: str):
         if len(chunks) > 1:
             time.sleep(1)
 
-def process_and_post_results():
+def process_and_post_results(config: dict):
     """
     Processes batch results and posts them to Slack.
     Results are grouped by repository.
@@ -463,7 +459,7 @@ def process_and_post_results():
             repo_results[repo_name].append(f"*Title:* <{issue_url}|[{title}]>\n{response_content}\n")
     
     # Create combined message grouped by repository
-    org_name = CONFIG['github']['owner']
+    org_name = config['github']['owner']
     combined_message = f"*Latest Updates for {org_name} ({today_date})*\n\n"
     
     for repo_name, summaries in repo_results.items():
@@ -474,36 +470,30 @@ def process_and_post_results():
     # Split into chunks if necessary and post
     chunks = chunk_message(combined_message)
     for chunk in chunks:
-        post_to_slack(CONFIG['slack']['channel'], chunk, CONFIG['slack']['token'])
+        post_to_slack(config['slack']['channel'], chunk, config['slack']['token'])
     
-    print(f"Results have been processed and posted to Slack channel {CONFIG['slack']['channel']}")
+    print(f"Results have been processed and posted to Slack channel {config['slack']['channel']}")
 
 def main():
     parser = argparse.ArgumentParser(description='GitHub Issue Summarizer')
-    parser.add_argument('--config', 
-                       default='config.yaml',
+    parser.add_argument('--config', default='config.yaml',
                        help='Path to the YAML configuration file')
-    parser.add_argument('--env',
-                       help='Path to the environment file (optional)')
+    parser.add_argument('--env', help='Path to the environment file (optional)')
     args = parser.parse_args()
     
     # Load config based on provided paths
-    global CONFIG
-    CONFIG = load_config(args.config, args.env)
+    config = load_config(args.config, args.env)
     
-    # Pass config path to functions that need it
-    issues = fetch_github_issues(args.config)
+    issues = fetch_github_issues(config, args.config)
     if len(issues) == 0:
         print("No new issues to report")
         return
     
-    tasks = prepare_klusterai_job(issues, tokenizer)
-    
-    # Pass config path to submit_klusterai_job
-    batch_status = submit_klusterai_job(tasks, args.config)
+    tasks = prepare_klusterai_job(config, issues, tokenizer)
+    batch_status = submit_klusterai_job(config, tasks, args.config)
     
     if batch_status.status.lower() == "completed":
-        process_and_post_results()
+        process_and_post_results(config)
 
 if __name__ == "__main__":
     main()
