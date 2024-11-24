@@ -1,6 +1,6 @@
-# GitHub Issue Summarizer: AI-Powered Slack Updates by kluster.ai
+# GitHub Issue & PR Summarizer: AI-Powered Slack Updates by kluster.ai
 
-This Slack bot helps engineering teams stay on top of their GitHub issues by automatically providing AI-powered summaries directly in Slack. Perfect for:
+This Slack bot helps engineering teams stay on top of their GitHub issues and pull requests by automatically providing AI-powered summaries directly in Slack. Perfect for:
 
 - Software engineers staying informed about bug reports and feature requests
 - Engineering managers tracking activity across multiple repositories
@@ -10,7 +10,7 @@ This Slack bot helps engineering teams stay on top of their GitHub issues by aut
 
 ## How It Works
 
-1. The bot periodically checks your GitHub repositories for new issues
+1. The bot periodically checks your GitHub repositories for new issues and pull requests
 2. It uses kluster.ai's Batch API (powered by Meta Llama 3.1 405B) to create summaries
 3. Summaries are automatically posted to your Slack channels
 
@@ -246,9 +246,9 @@ docker compose stop github-summary-bot-opensource
 
 
 ## How It Works
-This app processes GitHub issues in a few key steps:
+This app summarises GitHub issues and pull requests in a few key steps:
 
-### 1. Fetch Issues
+### 1. Fetch Issues & Pull Requests
 The script checks for new or updated GitHub issues since the last run. It can either monitor a single repository or all repositories in an organization.
 
 ```python
