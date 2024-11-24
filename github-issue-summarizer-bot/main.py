@@ -46,7 +46,7 @@ def load_config(config_path: str = 'config.yaml', env_path: str = None):
     if 'processing' not in config:
         config['processing'] = {}
     if 'limits' not in config['processing']:
-        config['processing']['limits'] = {'input_tokens_per_request': 100000}
+        config['processing']['limits'] = {'max_input_tokens_per_request': 100000}
     if 'batch' not in config['processing']:
         config['processing']['batch'] = {
             'cleanup': True,
@@ -278,6 +278,7 @@ def prepare_klusterai_job(
     Returns:
         Tuple[list, Path]: List of tasks and the directory path containing the files
     """
+    
     tasks = []
     
     for i, request in enumerate(requests):
@@ -583,13 +584,13 @@ def process_and_post_results(
     else:
         print(f"Updates posted to Slack channel {slack_channel}")
 
-def process_issue_content(issue: dict, input_token_limit: int, headers: dict) -> dict:
+def process_issue_content(issue: dict, max_input_tokens_per_request: int, headers: dict) -> dict:
     """
     Processes an issue's content to fit within token limits, including fetching comments if space allows.
     
     Args:
         issue: Dictionary containing issue data
-        input_token_limit: Maximum number of requested input tokens per request
+        max_input_tokens_per_request: Maximum number of requested input tokens per request
         headers: Request headers for GitHub API
         
     Returns:
@@ -598,13 +599,13 @@ def process_issue_content(issue: dict, input_token_limit: int, headers: dict) ->
     base_content = f"Repository: {issue['repository_name']}\nTitle: {issue['title']}\nBody: {issue['body']}"
     base_tokens = calculate_tokens(base_content)
     
-    if base_tokens > input_token_limit:
+    if base_tokens > max_input_tokens_per_request:
         print(f"Issue {issue['number']} exceeds token limit. Truncating body.")
-        excess_tokens = base_tokens - input_token_limit
+        excess_tokens = base_tokens - max_input_tokens_per_request
         chars_to_remove = excess_tokens * 4
         issue['body'] = issue['body'][:-chars_to_remove]
     else:
-        remaining_tokens = input_token_limit - base_tokens
+        remaining_tokens = max_input_tokens_per_request - base_tokens
         if issue.get("comments", 0) > 0 and remaining_tokens > 0:
             issue['comments_text'] = fetch_issue_comments(
                 issue.get("comments_url", ""),
@@ -648,10 +649,10 @@ def main():
         return
     
     headers = {"Authorization": f"token {config['api']['github']['token']}"}
-    input_token_limit = config['processing']['limits']['input_tokens_per_request']
+    max_input_tokens_per_request = config['processing']['limits']['max_input_tokens_per_request']
     
     for i in range(len(issues)):
-        issues[i] = process_issue_content(issues[i], input_token_limit, headers)
+        issues[i] = process_issue_content(issues[i], max_input_tokens_per_request, headers)
     
     # Prepare and submit the job
     file_dir = prepare_klusterai_job(

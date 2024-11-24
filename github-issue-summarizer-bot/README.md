@@ -103,30 +103,49 @@ The results file will look something like this:
 
 ## Setup Instructions
 
-### 1. Repository Setup
+### 1. Quick Start with Docker Compose
+
+The easiest way to run this bot is using Docker Compose:
+
 1. Clone this repository and cd into it.
 
-2. Create a virtual environment and install packages:
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-### 2. Environment Configuration
-You have two options for environment configuration:
-
-1. Create a `.env` file alongside your `config.yaml` (default behavior)
-2. Specify a custom `.env` file location using the `--env` flag when running the script
-
-Your `.env` file should contain:
+2. Create a `.env` file with your API keys (see [Getting Required Tokens](#getting-required-tokens) below):
 ```bash
 KLUSTERAI_API_KEY=your_klusterai_api_key
 GH_TOKEN=your_github_personal_access_token
 SLACK_TOKEN=your_slack_bot_token
 ```
 
-### 3. Getting Required Tokens
+3. Configure your settings in `docker-compose.yml`:
+```yaml
+services:
+  klusterai-github-summary-bot:
+    build: .
+    env_file:
+      - .env
+    environment:
+      - CRON_SCHEDULE=0 9 * * *  # Run daily at 9 AM
+      - RUN_NOW=true            # Run immediately when container starts
+      - GITHUB_ORG=your-org     # Your GitHub organization
+      - GITHUB_REPO=your-repo   # Optional: specific repo (remove for org-wide)
+      - SLACK_CHANNEL=your-channel
+      # Optional: adjust these as needed
+      - BATCH_CLEANUP=true
+      - KEEP_DAYS=7 # days to keep local files
+      - DEBUG=true 
+```
+
+4. Start the bot:
+```bash
+docker compose up -d
+```
+
+The bot will run according to the schedule you set in `CRON_SCHEDULE`. You can view logs with:
+```bash
+docker compose logs -f
+```
+
+### Getting Required Tokens
 
 #### kluster.ai API Key
 1. Sign up at [kluster.ai](https://kluster.ai)
@@ -154,12 +173,12 @@ SLACK_TOKEN=your_slack_bot_token
 {
     "display_information": {
         "name": "kluster.ai GitHub issues summarizer",
-        "description": "I produce daily summaries produced by the kluster.ai batch API of GithHub issues.",
+        "description": "I produce regular summaries of GitHub issues using the kluster.ai batch API.",
         "background_color": "#4a154b"
     },
     "features": {
         "bot_user": {
-            "display_name": "kluster.ai GH issue summarizer",
+            "display_name": "GitHub Issue Summaries by kluster.ai",
             "always_online": true
         }
     },
@@ -185,111 +204,21 @@ SLACK_TOKEN=your_slack_bot_token
 
 Store all these tokens in your `.env` file as shown in the Environment Configuration section.
 
+### Configuration Options
 
+When running with Docker Compose, you can configure the bot using environment variables in your `docker-compose.yml`:
 
-### 4. Configuration Settings
-Update the `config.yaml` file with your settings:
-
-```yaml
-# API Configuration
-api:
-  klusterai:
-    base_url: "http://api.kluster.ai/v1"
-    model: "klusterai/Meta-Llama-3.1-405B-Instruct-Turbo"
-  github:
-    owner: "your-github-org"
-    # repo field removed for org-wide monitoring
-  slack:
-    channel: "your-slack-channel"
-
-# Processing Settings
-processing:
-  limits:
-    input_tokens_per_request: 100000
-  batch:
-    cleanup: true
-    keep_days: 7
-    generated_files_directory: batch_files
-
-# Runtime Settings
-runtime:
-  debug: true
-```
-
-The configuration is organized into three main sections:
-
-1. **API Configuration** (`api`):
-   - `klusterai`: Settings for the kluster.ai API
-   - `github`: GitHub organization and repository settings
-   - `slack`: Slack channel configuration
-
-2. **Processing Settings** (`processing`):
-   - `limits`: Controls token limits for requests
-   - `batch`: Settings for batch file management
-     - `cleanup`: Enable/disable cleanup of old batch files
-     - `keep_days`: Number of days to keep batch files
-     - `generated_files_directory`: Directory for storing batch files
-
-3. **Runtime Settings** (`runtime`):
-   - `debug`: When true, prints messages to console instead of posting to Slack
-
-Note: For organization-wide monitoring, simply remove the `repo` field under `github`:
-```yaml
-api:
-  github:
-    owner: "your-github-org"
-    # repo field removed for org-wide monitoring
-```
-
-### 5. Try!
-Before setting up automation, let's test the script manually:
-
-1. Make sure your virtual environment is activated:
-```bash
-source .venv/bin/activate
-```
-
-2. Run the script:
-```bash
-python3 main.py --config config.yaml --env .env
-```
-
-You should see output similar to this:
-```
-Fetching GitHub issues since 2024-03-20T10:00:00Z
-Found 50 new issues to process
-Batch file uploaded. File id: file-abc123
-Batch request submitted. Batch ID: batch-xyz789
-Batch status: InProgress
-Completed requests: 2 / 50
-Batch status: InProgress
-Completed requests: 25 / 50
-Batch status: InProgress
-Completed requests: 50 / 50
-Batch status: Completed
-Posting summaries to Slack...
-Done! Check your Slack channel for the summaries.
-```
-
-If you encounter any errors:
-- Check that all your tokens in `.env` are correct
-- Verify your `config.yaml` settings
-- Ensure the Slack bot is invited to your channel
-
-Once you've confirmed everything works, proceed to set up automated running via cron.
-
-### 6. Script Setup for Cron
-Make the run script executable:
-```bash
-chmod +x run_github_report.sh
-```
-
-### 7. Scheduling
-Add a cron job to run the script periodically:
-```bash
-# Example: Run daily at 9 AM
-0 9 * * * /path/to/where/you/cloned/github-summarizer/run_github_report.sh 
-```
+| Variable | Description | Default |
+|----------|-------------|---------|
+| CRON_SCHEDULE | When to run the bot (cron syntax) | `0 9 * * *` (9 AM daily) |
+| RUN_NOW | Run immediately on startup | `true` |
+| GITHUB_ORG | A GitHub organization to monitor| Required |
+| GITHUB_REPO | Specific repository to monitor | Optional |
+| SLACK_CHANNEL | Slack channel for summaries | Required |
+| MAX_INPUT_TOKENS_PER_REQUEST | maximum input token limit per request | 100000 |
+| BATCH_CLEANUP | Clean up old local batch files | `true` |
+| KEEP_DAYS | Days to keep blocal atch files | 7 |
+| DEBUG | Print to console instead of Slack | `false` |
 
 ## How It Works
 This app processes GitHub issues in a few key steps:

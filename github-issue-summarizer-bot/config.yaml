@@ -10,7 +10,7 @@ api:
 
 processing:
   limits:
-    input_tokens_per_request: 100000
+    max_input_tokens_per_request: 100000
   batch:
     cleanup: true
     keep_days: 7
