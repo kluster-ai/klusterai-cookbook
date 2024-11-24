@@ -311,7 +311,7 @@ def prepare_klusterai_job(
                         "2. Provide a detailed summary of the main points, using only information from the source\n"
                         "3. If code changes are present, highlight key modifications exactly as shown\n"
                         "4. List any explicitly mentioned action items or pending questions\n"
-                        "5. [kluster.ai Suggestions] Clearly mark any AI-generated suggestions with this prefix\n\n"
+                        "5. [AI Suggestions] Clearly mark any AI-generated suggestions with this prefix\n\n"
                         "Formatting guidelines:\n"
                         "- Use single * for bold text (Slack format), never use **\n"
                         "- Use triple backticks for code blocks without language specifiers\n"
@@ -319,11 +319,10 @@ def prepare_klusterai_job(
                         "- Use bullet points (-) for lists\n\n"
                         "If the issue is a question:\n"
                         "1. Summarize the question exactly as presented\n"
-                        "2. If an answer exists in the text, prefix it with '*kluster.ai Assistant's Response:*'\n"
-                        "3. If providing an answer not found in the text, prefix with '[kluster.ai Suggestions]'\n"
-                        "4. If the question remains open, note it in the action items\n\n"
+                        "2. If providing an answer not found in the text, prefix with '[AI Suggestions]'\n"
+                        "3. If the question remains open, note it in the action items\n\n"
                         "Keep summaries factual and based solely on the provided content. "
-                        "If suggesting additional context or solutions, clearly mark them as '*kluster.ai Assistant's Note:*' "
+                        "If suggesting additional context or solutions, clearly mark them as '*AI's Note:*' "
                         "to distinguish them from the original content."
                     )},
                     {"role": "user", "content": f"Repository: {repo_name}\nTitle: {title}\nBody: {body}\nComments: {comments_text}"},
