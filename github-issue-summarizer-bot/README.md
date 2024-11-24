@@ -8,6 +8,43 @@ This Slack bot helps engineering teams stay on top of their GitHub issues and pu
 - Team leads who want to reduce time spent in issue triage
 - Open source maintainers managing high-volume repositories
 
+## Quick Start (2-Minute Setup)
+
+1. Create a file named `docker-compose.yml`:
+```yaml
+services:
+  github-summary-bot:
+    image: public.ecr.aws/o6q8k5w4/klusterai/github-summary-slackbot:latest
+    env_file: .env
+    environment:
+      - GITHUB_ORG=a-github-org     # A GitHub organization name
+      - SLACK_CHANNEL=your-channel  # Channel to post summaries
+      - CRON_SCHEDULE=0 9 * * *  # Daily at 9 AM
+      - RUN_NOW=true            # Run immediately when container starts
+      - KLUSTERAI_BASE_URL=https://api.kluster.ai/v1   
+      - KLUSTERAI_MODEL=klusterai/Meta-Llama-3.1-405B-Instruct-Turbo
+```
+
+2. Create a `.env` file with your tokens (see [Getting Required Tokens](#getting-required-tokens) below):
+
+```bash
+KLUSTERAI_API_KEY=your_klusterai_api_key
+GH_TOKEN=your_github_token
+SLACK_TOKEN=your_slack_bot_token
+```
+
+3. Start the bot:
+```bash
+docker compose up -d
+or
+docker-compose up -d # for older dockers
+```
+
+That's it! The bot has built in scheduling will now post daily summaries to your Slack channel. 🎉
+
+Need the tokens? [Get them here](#getting-required-tokens)
+Want more options? [See advanced configuration](#configuration-options)
+
 ## How It Works
 
 1. The bot periodically checks your GitHub repositories for new issues and pull requests
@@ -30,7 +67,7 @@ Instead of processing issues one at a time, this bot handles them in batches, wh
 
 ### Quick Start with Docker Compose
 
-The easiest way to run this bot is using Docker Compose. It includes built-in scheduling so your summaries run automatically!
+The easiest way to run this bot is using Docker Compose and our prebuilt image [shown here](#quick-start-2-minute-setup).
 
 1. Clone this repository and cd into it.
 
@@ -54,6 +91,8 @@ services:
       - GITHUB_ORG=your-org     # Your GitHub organization
       - GITHUB_REPO=your-repo   # Optional: specific repo (remove for org-wide)
       - SLACK_CHANNEL=your-channel
+      - KLUSTERAI_BASE_URL=https://api.kluster.ai/v1   
+      - KLUSTERAI_MODEL=klusterai/Meta-Llama-3.1-405B-Instruct-Turbo
       # Optional: adjust these as needed
       - BATCH_CLEANUP=true # delete local generated files
       - KEEP_DAYS=7 # days to keep local files
@@ -153,7 +192,7 @@ When running with Docker Compose, you can configure the bot using environment va
 
 This bot offers flexible scheduling options to fit your team's workflow:
 
-#### 1. Using Docker Compose (Recommended)
+#### 1. Using Docker Compose 
 The built-in scheduler uses cron syntax, making it easy to set up regular runs:
 
 ```yaml

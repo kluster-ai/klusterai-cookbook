@@ -37,38 +37,67 @@ def load_config(config_path: str = 'config.yaml', env_path: str = None):
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
     
+    # Initialize API section if not present
+    if 'api' not in config:
+        config['api'] = {}
+    if 'klusterai' not in config['api']:
+        config['api']['klusterai'] = {}
+    if 'github' not in config['api']:
+        config['api']['github'] = {}
+    if 'slack' not in config['api']:
+        config['api']['slack'] = {}
+    
+    # Define default values
+    default_processing = {
+        'limits': {
+            'max_input_tokens_per_request': 100000
+        },
+        'batch': {
+            'generated_files_directory': 'batch_files',
+            'cleanup': True,
+            'keep_days': 7
+        }
+    }
+
+    # Initialize processing section if not present
+    config.setdefault('processing', {})
+    
+    # Deep merge defaults with existing config
+    for section, values in default_processing.items():
+        config['processing'].setdefault(section, {})
+        for key, default_value in values.items():
+            if not config['processing'][section].get(key):
+                config['processing'][section][key] = default_value
+    
+    # Add initialization for runtime section
+    if 'runtime' not in config:
+        config['runtime'] = {}
+    if config['runtime'].get('debug') is None or config['runtime'].get('debug') == '':
+        config['runtime']['debug'] = False
+    
+    # Define default values for API sections
+    default_api = {
+        'klusterai': {
+            'model': 'klusterai/Meta-Llama-3.1-405B-Instruct-Turbo',
+            'base_url': 'https://api.kluster.ai/v1'
+        }
+    }
+
+    # Deep merge defaults with existing config
+    for service, values in default_api.items():
+        config['api'].setdefault(service, {})
+        for key, default_value in values.items():
+            if not config['api'][service].get(key):
+                config['api'][service][key] = default_value
+    
     # Set API keys from environment variables
     config['api']['klusterai']['key'] = os.getenv("KLUSTERAI_API_KEY")
     config['api']['github']['token'] = os.getenv("GH_TOKEN")
     config['api']['slack']['token'] = os.getenv("SLACK_TOKEN")
     
-    # Add default values
-    if 'processing' not in config:
-        config['processing'] = {}
-    if 'limits' not in config['processing']:
-        config['processing']['limits'] = {}
-    if 'max_input_tokens_per_request' not in config['processing']['limits']:
-        config['processing']['limits']['max_input_tokens_per_request'] = 100000
-    else:
-        max_tokens = config['processing']['limits']['max_input_tokens_per_request']
-        if not isinstance(max_tokens, (int, float)):
-            config['processing']['limits']['max_input_tokens_per_request'] = 100000
-
-    if 'batch' not in config['processing']:
-        config['processing']['batch'] = {
-            'cleanup': True,
-            'keep_days': 7,
-            'generated_files_directory': 'batch_files'
-        }
-        
-    if 'runtime' not in config:
-        config['runtime'] = {'debug': False}
-    elif 'debug' not in config['runtime']:
-        config['runtime']['debug'] = False
-    
     # Validate required fields
     required_fields = {
-        'api.klusterai': ['key', 'base_url', 'model'],
+        'api.klusterai': ['key'],
         'api.github': ['token', 'owner'],
         'api.slack': ['token', 'channel']
     }
@@ -242,14 +271,13 @@ def fetch_github_issues(
     
     return all_issues
 
-def fetch_issue_comments(comments_url: str, headers: dict, tokenizer, token_limit: int) -> str:
+def fetch_issue_comments(comments_url: str, headers: dict, token_limit: int) -> str:
     """
     Retrieves and concatenates comments for a GitHub issue, respecting token limits.
     
     Args:
         comments_url: URL endpoint for the issue's comments
         headers: Request headers including authentication
-        tokenizer: Tokenizer instance for calculating token counts
         token_limit: Maximum number of tokens allowed
         
     Returns:
@@ -632,7 +660,6 @@ def process_issue_content(issue: dict, max_input_tokens_per_request: int, header
             issue['comments_text'] = fetch_issue_comments(
                 issue.get("comments_url", ""),
                 headers,
-                tokenizer,
                 remaining_tokens
             )
     
@@ -649,10 +676,6 @@ def main():
         config = load_config(args.config, args.env)
     except (yaml.YAMLError, ValueError) as e:
         print(f"Configuration error: {e}")
-        return
-        
-    if config['processing']['batch']['keep_days'] < 0:
-        print("Error: keep_days must be 0 or greater")
         return
     
     # Create last_run file path from config path
@@ -671,10 +694,13 @@ def main():
         return
     
     headers = {"Authorization": f"token {config['api']['github']['token']}"}
-    max_input_tokens_per_request = config['processing']['limits']['max_input_tokens_per_request']
-    
+   
     for i in range(len(issues)):
-        issues[i] = process_issue_content(issues[i], max_input_tokens_per_request, headers)
+        issues[i] = process_issue_content(
+            issues[i], 
+            config['processing']['limits']['max_input_tokens_per_request'], 
+            headers
+        )
     
     # Prepare and submit the job
     file_dir = prepare_klusterai_job(
@@ -708,8 +734,8 @@ def main():
             
     if config['processing']['batch']['cleanup']:
         cleanup_batch_files(
-            config['processing']['batch']['keep_days'],
-            config['processing']['batch']['generated_files_directory']
+            keep_days=config['processing']['batch']['keep_days'],
+            batch_dir=config['processing']['batch']['generated_files_directory']
         )
 
 if __name__ == "__main__":
