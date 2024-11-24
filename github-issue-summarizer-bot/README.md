@@ -246,7 +246,7 @@ def fetch_github_issues(
 ```
 
 ### 2. Process GitHub Post and Comments
-Each issue's content (title, body, and comments) is processed to fit within token limits. Comments are included if space allows after the main content.
+Retrieve any comments from the GitHub issue and verify/preprocess so that they fit within the context window for each request.
 
 ```python
 def process_issue_content(issue: dict, input_token_limit: int, headers: dict) -> dict:
@@ -255,7 +255,7 @@ def process_issue_content(issue: dict, input_token_limit: int, headers: dict) ->
     
     if base_tokens > input_token_limit:
         # Truncate if needed
-        print(f"Issue {issue['number']} exceeds token limit. Truncating body.")
+        print(f"Issue {issue['number']} exceeds max input token per request limit. Truncating...")
     else:
         # Fetch comments if space allows
         remaining_tokens = input_token_limit - base_tokens
@@ -264,7 +264,7 @@ def process_issue_content(issue: dict, input_token_limit: int, headers: dict) ->
 ```
 
 ### 3. Prepare and Submit Batch Job
-The processed issues are formatted into a batch job for kluster.ai's API. Each issue becomes a task in the batch, with proper prompting for summarization.
+The processed issues are formatted into a batch job for kluster.ai's API. Each issue becomes a request in the batch job, with prompting for summarization.
 
 ```python
 def prepare_klusterai_job(
@@ -373,6 +373,5 @@ When running in organization-wide mode, the tool will:
 
 This is particularly useful for:
 - Organizations with many active repositories
-- Teams that need to monitor issue activity across multiple projects
-- Managers tracking engagement across an organization
+- Teams that need to keep track of issue activity across multiple projects
 
