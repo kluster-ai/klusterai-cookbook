@@ -37,34 +37,45 @@ def load_config(config_path: str = 'config.yaml', env_path: str = None):
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
     
-    config['klusterai']['api_key'] = os.getenv("KLUSTERAI_API_KEY")
-    config['github']['token'] = os.getenv("GH_TOKEN")
-    config['slack']['token'] = os.getenv("SLACK_TOKEN")
+    # Set API keys from environment variables
+    config['api']['klusterai']['key'] = os.getenv("KLUSTERAI_API_KEY")
+    config['api']['github']['token'] = os.getenv("GH_TOKEN")
+    config['api']['slack']['token'] = os.getenv("SLACK_TOKEN")
     
-    # Add a default token limit if not specified in config
-    if 'limits' not in config:
-        config['limits'] = {}
-    if 'input_tokens' not in config['limits']:
-        config['limits']['input_tokens'] = 100000
+    # Add default values
+    if 'processing' not in config:
+        config['processing'] = {}
+    if 'limits' not in config['processing']:
+        config['processing']['limits'] = {'input_tokens_per_request': 100000}
+    if 'batch' not in config['processing']:
+        config['processing']['batch'] = {
+            'cleanup': True,
+            'keep_days': 7,
+            'generated_files_directory': 'batch_files'
+        }
+    if 'runtime' not in config:
+        config['runtime'] = {'debug': False}
     
+    # Validate required fields
     required_fields = {
-        'klusterai': ['api_key', 'base_url', 'model'],
-        'github': ['token', 'owner'],
-        'slack': ['token', 'channel']
+        'api.klusterai': ['key', 'base_url', 'model'],
+        'api.github': ['token', 'owner'],
+        'api.slack': ['token', 'channel']
     }
     
-    for section, fields in required_fields.items():
-        if section not in config:
-            raise ValueError(f"Missing required section '{section}' in config")
+    for path, fields in required_fields.items():
+        section = config
+        for part in path.split('.'):
+            if part not in section:
+                raise ValueError(f"Missing required section '{path}' in config")
+            section = section[part]
         for field in fields:
-            if not config[section].get(field):
-                raise ValueError(f"Missing required field '{field}' in {section} section")
-            
-            
-    if 'repo' not in config['github']:
-        # use all repos in org/user
-        config['github']['repo'] = None
+            if not section.get(field):
+                raise ValueError(f"Missing required field '{field}' in {path} section")
     
+    # Handle optional repo setting
+    if 'repo' not in config['api']['github']:
+        config['api']['github']['repo'] = None
     
     return config
 
@@ -104,7 +115,7 @@ def get_last_run_time(last_run_file: Path) -> datetime:
             return datetime.fromtimestamp(float(timestamp))
     except (FileNotFoundError, ValueError):
         # If file doesn't exist or is invalid, default to 24 hours ago
-        return datetime.now() - timedelta(days=1)
+        return datetime.now() - timedelta(days=2)
 
 def update_last_run_time(last_run_file: Path):
     """
@@ -606,14 +617,6 @@ def main():
     parser.add_argument('--config', default='config.yaml',
                        help='Path to the YAML configuration file')
     parser.add_argument('--env', help='Path to the environment file (optional)')
-    parser.add_argument('--no-cleanup', action='store_true',
-                       help='Disable automatic cleanup of old batch files')
-    parser.add_argument('--keep-days', type=int, default=7,
-                       help='Number of days to keep batch files when cleanup is enabled')
-    parser.add_argument('--batch-dir', default='batch_files',
-                       help='Directory to store batch files')
-    parser.add_argument('--debug', action='store_true',
-                       help='Enable debug mode (disable Slack posting)')
     args = parser.parse_args()
     
     try:
@@ -622,8 +625,8 @@ def main():
         print(f"Configuration error: {e}")
         return
         
-    if args.keep_days < 0:
-        print("Error: keep-days must be 0 or greater")
+    if config['processing']['batch']['keep_days'] < 0:
+        print("Error: keep_days must be 0 or greater")
         return
     
     # Create last_run file path from config path
@@ -631,9 +634,9 @@ def main():
     
     # Fetch issues first
     issues = fetch_github_issues(
-        github_token=config['github']['token'],
-        owner=config['github']['owner'],
-        repo=config['github']['repo'],
+        github_token=config['api']['github']['token'],
+        owner=config['api']['github']['owner'],
+        repo=config['api']['github']['repo'],
         last_run_file=last_run_file
     )
     
@@ -641,22 +644,22 @@ def main():
         print("No new issues to report")
         return
     
-    headers = {"Authorization": f"token {config['github']['token']}"}
-    input_token_limit = config['limits']['input_tokens']
+    headers = {"Authorization": f"token {config['api']['github']['token']}"}
+    input_token_limit = config['processing']['limits']['input_tokens_per_request']
     
     for i in range(len(issues)):
         issues[i] = process_issue_content(issues[i], input_token_limit, headers)
     
     # Prepare and submit the job
     file_dir = prepare_klusterai_job(
-        model=config['klusterai']['model'],
+        model=config['api']['klusterai']['model'],
         requests=issues,
-        batch_dir=args.batch_dir
+        batch_dir=config['processing']['batch']['generated_files_directory']
     )
     
     client = OpenAI(
-        api_key=config['klusterai']['api_key'],
-        base_url=config['klusterai']['base_url']
+        api_key=config['api']['klusterai']['key'],
+        base_url=config['api']['klusterai']['base_url']
     )
     
     batch_id = submit_klusterai_job(
@@ -670,15 +673,18 @@ def main():
     if batch_status.status.lower() == "completed":
         retrieve_result_file_contents(batch_status, client, file_dir)
         process_and_post_results(
-            org_name=config['github']['owner'],
-            slack_channel=config['slack']['channel'],
-            slack_token=config['slack']['token'],
+            org_name=config['api']['github']['owner'],
+            slack_channel=config['api']['slack']['channel'],
+            slack_token=config['api']['slack']['token'],
             file_dir=file_dir,
-            debug=args.debug
+            debug=config['runtime']['debug']
         )
             
-    if not args.no_cleanup:
-        cleanup_batch_files(args.keep_days, args.batch_dir)
+    if config['processing']['batch']['cleanup']:
+        cleanup_batch_files(
+            config['processing']['batch']['keep_days'],
+            config['processing']['batch']['generated_files_directory']
+        )
 
 if __name__ == "__main__":
     main()

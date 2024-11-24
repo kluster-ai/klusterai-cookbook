@@ -1,13 +1,20 @@
-klusterai:
-  base_url: "http://api.kluster.ai/v1"
-  model: "klusterai/Meta-Llama-3.1-405B-Instruct-Turbo"
+api:
+  klusterai:
+    base_url: "http://api.kluster.ai/v1"
+    model: "klusterai/Meta-Llama-3.1-405B-Instruct-Turbo"
+  github:
+    owner: your-org-name
+    repo: optional-specific-repo  # remove for all repos
+  slack:
+    channel: your-channel-name
 
-github:
-  owner: "ADD-YOUR-OWNER-HERE"
-  repo: "YOUR-REPO-HERE" # remove this line if you want to process all repos
+processing:
+  limits:
+    input_tokens_per_request: 100000
+  batch:
+    cleanup: true
+    keep_days: 7
+    generated_files_directory: batch_files
 
-slack:
-  channel: "ADD-YOUR-CHANNEL-HERE"
-
-limits:
-  input_tokens_per_request: 100000 
+runtime:
+  debug: true

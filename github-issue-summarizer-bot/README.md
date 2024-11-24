@@ -191,24 +191,55 @@ Store all these tokens in your `.env` file as shown in the Environment Configura
 Update the `config.yaml` file with your settings:
 
 ```yaml
-kluster:
-  base_url: "http://api.kluster.ai/v1"
-  model: "klusterai/Meta-Llama-3.1-405B-Instruct-Turbo"
+# API Configuration
+api:
+  klusterai:
+    base_url: "http://api.kluster.ai/v1"
+    model: "klusterai/Meta-Llama-3.1-405B-Instruct-Turbo"
+  github:
+    owner: "your-github-org"
+    # repo field removed for org-wide monitoring
+  slack:
+    channel: "your-slack-channel"
 
-github:
-  owner: "your-github-org"
-  repo: "your-github-repo"
+# Processing Settings
+processing:
+  limits:
+    input_tokens_per_request: 100000
+  batch:
+    cleanup: true
+    keep_days: 7
+    generated_files_directory: batch_files
 
-slack:
-  channel: "your-slack-channel"
-
-limits:
-  input_tokens: 100000
+# Runtime Settings
+runtime:
+  debug: true
 ```
 
-Note: You can choose between two modes:
-- **Single Repository**: Set a specific repository name in the `repo` field
-- **Organization-wide**: Remove the `repo` field to process issues from all repositories in your organization
+The configuration is organized into three main sections:
+
+1. **API Configuration** (`api`):
+   - `klusterai`: Settings for the kluster.ai API
+   - `github`: GitHub organization and repository settings
+   - `slack`: Slack channel configuration
+
+2. **Processing Settings** (`processing`):
+   - `limits`: Controls token limits for requests
+   - `batch`: Settings for batch file management
+     - `cleanup`: Enable/disable cleanup of old batch files
+     - `keep_days`: Number of days to keep batch files
+     - `generated_files_directory`: Directory for storing batch files
+
+3. **Runtime Settings** (`runtime`):
+   - `debug`: When true, prints messages to console instead of posting to Slack
+
+Note: For organization-wide monitoring, simply remove the `repo` field under `github`:
+```yaml
+api:
+  github:
+    owner: "your-github-org"
+    # repo field removed for org-wide monitoring
+```
 
 ### 5. Try!
 Before setting up automation, let's test the script manually:
@@ -342,7 +373,8 @@ def process_and_post_results(
     org_name: str,
     slack_channel: str,
     slack_token: str,
-    file_dir: Path
+    file_dir: Path,
+    debug: bool = False
 ) -> None:
     # Organize results by repository
     repo_results = {}
@@ -379,7 +411,14 @@ def post_to_slack(channel: str, text: str, token: str):
         }
 ```
 
-The script also includes automatic cleanup of old batch files if requested.
+The script also includes automatic cleanup of old batch files, controlled by these settings:
+```yaml
+processing:
+  batch:
+    cleanup: true  # Enable/disable cleanup
+    keep_days: 7   # Number of days to keep files
+    generated_files_directory: batch_files  # Directory to clean
+```
 
 ## Organization-wide Summaries
 
@@ -387,9 +426,10 @@ This tool can monitor issues across all repositories in your GitHub organization
 
 1. Remove the repo field in `config.yaml`:
 ```yaml
-github:
-  owner: "your-github-org"
-#   repo: "your-github-repo"
+api:
+  github:
+    owner: "your-github-org"
+    # repo field removed for org-wide monitoring
 ```
 
 2. Ensure your GitHub token has appropriate permissions:
