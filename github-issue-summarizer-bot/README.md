@@ -243,8 +243,6 @@ docker compose logs -f github-summary-bot-team2
 docker compose stop github-summary-bot-opensource
 ```
 
-
-
 ## How It Works
 This app summarises GitHub issues and pull requests in a few key steps:
 
