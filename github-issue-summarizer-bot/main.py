@@ -53,8 +53,11 @@ def load_config(config_path: str = 'config.yaml', env_path: str = None):
             'keep_days': 7,
             'generated_files_directory': 'batch_files'
         }
+        
     if 'runtime' not in config:
         config['runtime'] = {'debug': False}
+    elif 'debug' not in config['runtime']:
+        config['runtime']['debug'] = False
     
     # Validate required fields
     required_fields = {
