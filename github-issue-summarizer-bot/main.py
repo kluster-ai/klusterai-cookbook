@@ -1,14 +1,17 @@
-import requests
-from openai import OpenAI
+import argparse
 import json
-import time
 import os
+import shutil
+import time
 from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Tuple
+
+import requests
 import tiktoken
 import yaml
 from dotenv import load_dotenv
-import argparse
-from pathlib import Path
+from openai import OpenAI
 
 def load_config(config_path: str = 'config.yaml', env_path: str = None):
     """
@@ -44,6 +47,25 @@ def load_config(config_path: str = 'config.yaml', env_path: str = None):
     if 'input_tokens' not in config['limits']:
         config['limits']['input_tokens'] = 100000
     
+    required_fields = {
+        'klusterai': ['api_key', 'base_url', 'model'],
+        'github': ['token', 'owner'],
+        'slack': ['token', 'channel']
+    }
+    
+    for section, fields in required_fields.items():
+        if section not in config:
+            raise ValueError(f"Missing required section '{section}' in config")
+        for field in fields:
+            if not config[section].get(field):
+                raise ValueError(f"Missing required field '{field}' in {section} section")
+            
+            
+    if 'repo' not in config['github']:
+        # use all repos in org/user
+        config['github']['repo'] = None
+    
+    
     return config
 
 def setup_tokenizer():
@@ -52,7 +74,7 @@ def setup_tokenizer():
 
 tokenizer = setup_tokenizer()
 
-def calculate_tokens(text, tokenizer):
+def calculate_tokens(text):
     """
     Calculates the number of tokens.
     
@@ -78,7 +100,8 @@ def get_last_run_time(last_run_file: Path) -> datetime:
     try:
         with open(last_run_file, 'r') as f:
             timestamp = float(f.read().strip())
-            return datetime.fromtimestamp(timestamp)
+            # Convert timestamp to datetime with millisecond precision
+            return datetime.fromtimestamp(float(timestamp))
     except (FileNotFoundError, ValueError):
         # If file doesn't exist or is invalid, default to 24 hours ago
         return datetime.now() - timedelta(days=1)
@@ -91,7 +114,7 @@ def update_last_run_time(last_run_file: Path):
         last_run_file: Path to store the timestamp
     """
     with open(last_run_file, 'w') as f:
-        f.write(str(time.time()))
+        f.write(f"{time.time():.3f}")
 
 def fetch_org_repos(owner: str, headers: dict) -> list:
     """
@@ -151,6 +174,14 @@ def fetch_github_issues(
     since = get_last_run_time(last_run_file)
     headers = {"Authorization": f"token {github_token}"}
     
+    try:
+        # Test token with a simple API call
+        test_response = requests.get("https://api.github.com/user", headers=headers)
+        test_response.raise_for_status()
+    except requests.exceptions.RequestException:
+        print("Error: Invalid GitHub token or API access issue")
+        return []
+    
     all_issues = []
     repos_to_check = []
     
@@ -165,13 +196,13 @@ def fetch_github_issues(
         params = {"since": since.isoformat()}
         page = 1
         
+        repo_issues = []  # Track issues for current repo
         while True:
             params["page"] = page
             try:
                 response = requests.get(github_url, headers=headers, params=params)
                 response.raise_for_status()
                 page_issues = response.json()
-                
                 if not page_issues:
                     break
                 
@@ -179,13 +210,14 @@ def fetch_github_issues(
                 for issue in page_issues:
                     issue['repository_name'] = repo
                 
-                all_issues.extend(page_issues)
+                repo_issues.extend(page_issues)  
                 page += 1
             except requests.exceptions.RequestException as e:
                 print(f"Error fetching GitHub issues for repo {repo}: {e}")
-                continue
+                break  
                 
-        print(f"Found {len(all_issues)} issues in {repo}")
+        print(f"Found {len(repo_issues)} issues in {repo}")
+        all_issues.extend(repo_issues) 
     
     return all_issues
 
@@ -208,8 +240,8 @@ def fetch_issue_comments(comments_url: str, headers: dict, tokenizer, token_limi
     
     for comment in comments:
         comment_body = comment.get("body", "")
-        current_tokens = calculate_tokens(comments_text, tokenizer)
-        new_comment_tokens = calculate_tokens(comment_body, tokenizer)
+        current_tokens = calculate_tokens(comments_text)
+        new_comment_tokens = calculate_tokens(comment_body)
         
         if current_tokens + new_comment_tokens > token_limit:
             print("Token limit reached for comments.")
@@ -223,37 +255,24 @@ def fetch_issue_comments(comments_url: str, headers: dict, tokenizer, token_limi
 
 def prepare_klusterai_job(
     model: str,
-    github_token: str,
-    input_token_limit: int,
-    issues: list,
-    tokenizer
-) -> list:
+    requests: list,
+    batch_dir: str = "batch_files"
+) -> Tuple[list, Path]:
     """
-    Prepares a list of requests for kluster.ai batch processing.
+    Prepares a list of requests for kluster.ai batch processing and saves them to a file.
     
-    Args:
-        model: The model to use for processing
-        github_token: GitHub token for fetching comments
-        input_token_limit: Maximum number of tokens allowed
-        issues: List of GitHub issues
-        tokenizer: Tokenizer instance for text processing
+    Returns:
+        Tuple[list, Path]: List of tasks and the directory path containing the files
     """
     tasks = []
-    for i, issue in enumerate(issues):
-        title = issue.get("title", "")
-        body = issue.get("body", "")
-        issue_url = issue.get("html_url", "")
-        repo_name = issue.get("repository_name", "")
+    
+    for i, request in enumerate(requests):
+        title = request.get("title", "")
+        body = request.get("body", "")
+        issue_url = request.get("html_url", "")
+        repo_name = request.get("repository_name", "")
+        comments_text = request.get("comments_text", "")
         
-        comments_text = ""
-        if issue.get("comments", 0) > 0:
-            comments_text = fetch_issue_comments(
-                issue.get("comments_url", ""),
-                {"Authorization": f"token {github_token}"},
-                tokenizer,
-                input_token_limit
-            )
-
         task = {
             "custom_id": f"issue-{i+1}",
             "method": "POST",
@@ -279,41 +298,107 @@ def prepare_klusterai_job(
             }
         }
         tasks.append(task)
-    return tasks
 
-def submit_klusterai_job(
-    api_key: str,
-    base_url: str,
-    tasks: list,
-    last_run_file: Path,
-    file_name: str = "batch_input.jsonl"
-) -> dict:
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    file_dir = Path(batch_dir) / timestamp
+    file_dir.mkdir(parents=True, exist_ok=True)
+    
+    input_path = file_dir / "batch_input.jsonl"
+
+    try:
+        with open(input_path, "w") as file:
+            for task in tasks:
+                file.write(json.dumps(task) + "\n")
+    except IOError as e:
+        print(f"Error writing batch file: {e}")
+        return None
+
+    return file_dir
+
+def ensure_batch_directory(batch_dir: str = "batch_files") -> Path:
     """
-    Submits a batch processing job to kluster.ai and monitors its completion.
+    Creates and returns the batch directory path if it doesn't exist.
     
     Args:
-        api_key: Kluster.ai API key
-        base_url: Kluster.ai base URL
-        tasks: List of task dictionaries to process
-        last_run_file: Path to the file storing last run timestamp
-        file_name: Name of the temporary JSONL file to store tasks
+        batch_dir: Name of the directory to store batch files
+        
+    Returns:
+        Path: Path object for the batch directory
     """
-    # Save tasks to file
-    with open(file_name, "w") as file:
-        for task in tasks:
-            file.write(json.dumps(task) + "\n")
+    batch_path = Path(batch_dir)
+    batch_path.mkdir(exist_ok=True)
+    return batch_path
 
-    client = OpenAI(
-        api_key=api_key,
-        base_url=base_url
-    )
+def cleanup_batch_files(keep_days: int = 7, batch_dir: str = "batch_files") -> None:
+    """
+    Removes batch directories older than specified days.
+    """
+    batch_path = Path(batch_dir)
+    
+    if keep_days == 0:
+        # Immediate deletion of all run directories
+        for dir_path in batch_path.iterdir():
+            if dir_path.is_dir():
+                try:
+                    shutil.rmtree(dir_path)
+                    print(f"Cleaned up directory: {dir_path}")
+                except Exception as e:
+                    print(f"Error cleaning up {dir_path}: {e}")
+        return
+        
+    # Normal cleanup for keep_days > 0
+    cutoff_time = datetime.now() - timedelta(days=keep_days)
+    for dir_path in batch_path.iterdir():
+        if not dir_path.is_dir():
+            continue
+            
+        try:
+            dir_time = datetime.strptime(dir_path.name, "%Y%m%d_%H%M%S_%f")
+            if dir_time < cutoff_time:
+                shutil.rmtree(dir_path)
+                print(f"Cleaned up old directory: {dir_path}")
+        except (ValueError, OSError) as e:
+            print(f"Error processing {dir_path}: {e}")
 
-    # Upload batch file
-    batch_input_file = client.files.create(
-        file=open(file_name, "rb"),
-        purpose="batch"
-    )
-    print(f"Batch file uploaded. File id: {batch_input_file.id}")
+def monitor_batch_status(client, batch_id: str, interval: int = 10) -> dict:
+    """
+    Monitors the status of a batch processing job.
+    
+    Args:
+        client: OpenAI client instance
+        batch_id: ID of the batch job to monitor
+        interval: Time in seconds between status checks (default: 10)
+        
+    Returns:
+        dict: Final batch status
+    """
+    while True:
+        batch_status = client.batches.retrieve(batch_id)
+        print("Batch status: {}".format(batch_status.status))
+        print(
+            f"Completed requests: {batch_status.request_counts.completed} / {batch_status.request_counts.total}"
+        )
+
+        if batch_status.status.lower() in ["completed", "failed", "canceled"]:
+            break
+
+        time.sleep(interval)
+    
+    return batch_status
+
+def submit_klusterai_job(client: OpenAI, last_run_file: Path, file_dir: Path) -> str:
+    input_path = file_dir / "batch_input.jsonl"
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input file not found: {input_path}")
+        
+    try:
+        batch_input_file = client.files.create(
+            file=open(input_path, "rb"),
+            purpose="batch"
+        )
+    except Exception as e:
+        print(f"Error uploading batch file: {e}")
+        raise
 
     # Create batch request
     response = client.batches.create(
@@ -323,52 +408,25 @@ def submit_klusterai_job(
     )
     print(f"Batch request submitted. Batch ID: {response.id}")
 
-    # Update the last run time
     update_last_run_time(last_run_file)
-    
-    # Monitor batch status
-    while True:
-        batch_status = client.batches.retrieve(response.id)
-        print("Batch status: {}".format(batch_status.status))
-        print(
-            f"Completed requests: {batch_status.request_counts.completed} / {batch_status.request_counts.total}"
-        )
+    return response.id
 
-        if batch_status.status.lower() in ["completed", "failed", "canceled"]:
-            break
-
-        time.sleep(10)
-        
-    save_results(batch_status, client)
-    return batch_status
-
-def save_results(batch_status, client) -> bool:
+def retrieve_result_file_contents(batch_status, client, file_dir: Path) -> Path:
     """
     Saves the results of a completed batch job to a local file.
-    
-    Args:
-        batch_status: Status object from the batch job
-        client: OpenAI client instance
-        
-    Returns:
-        bool: True if results were saved successfully, False otherwise
     """
-    if batch_status.status.lower() == "completed":
-        result_file_id = batch_status.output_file_id
-        results = client.files.content(result_file_id).content
-        
-        result_file_name = "batch_results.jsonl"
-        with open(result_file_name, "wb") as file:
-            file.write(results)
-        print(f"\nResults saved to {result_file_name}")
-        return True
-    else:
-        print(f"Batch failed with status: {batch_status.status}")
-        return False
+    result_file_id = batch_status.output_file_id
+    results = client.files.content(result_file_id).content
+    
+    result_path = file_dir / "batch_results.jsonl"
+    
+    with open(result_path, "wb") as file:
+        file.write(results)
+    print(f"\nResults saved to {result_path}")
 
 def chunk_message(text: str, limit: int = 40000) -> list:
     """
-    Splits a message into chunks that respect Slack's character limit.
+    Splits a message into chunks of specified size limit.
     
     Args:
         text: Message text to split
@@ -377,31 +435,23 @@ def chunk_message(text: str, limit: int = 40000) -> list:
     Returns:
         list: List of message chunks
     """
-    if len(text) <= limit:
-        return [text]
-    
     chunks = []
-    current_chunk = ""
-    
-    # Split by newlines to avoid breaking in middle of lines
-    lines = text.split('\n')
-    
-    for line in lines:
-        if len(current_chunk) + len(line) + 1 <= limit:
-            current_chunk += line + '\n'
-        else:
-            # If current chunk is not empty, add it to chunks
-            if current_chunk:
-                chunks.append(current_chunk.rstrip())
-            current_chunk = line + '\n'
-    
-    # Add the last chunk if not empty
-    if current_chunk:
-        chunks.append(current_chunk.rstrip())
+    while text:
+        if len(text) <= limit:
+            chunks.append(text)
+            break
+        
+        # Find the last newline within the limit
+        split_index = text[:limit].rfind('\n')
+        if split_index == -1:  # No newline found, just split at limit
+            split_index = limit
+            
+        chunks.append(text[:split_index])
+        text = text[split_index:].lstrip()
     
     return chunks
 
-def post_to_slack(channel: str, text: str, token: str):
+def post_to_slack(channel: str, text: str, token: str, debug: bool = False):
     """
     Posts a message to a Slack channel, breaking into multiple messages if needed.
     
@@ -409,10 +459,19 @@ def post_to_slack(channel: str, text: str, token: str):
         channel: Name of the Slack channel
         text: Message text to post
         token: Slack API token
+        debug: If True, print messages instead of posting to Slack
         
     Raises:
         Prints error message if posting fails (e.g., bot not in channel)
     """
+    if debug:
+        print("\n=== DEBUG: would post to Slack ===")
+        print(f"Channel: {channel}")
+        print("Message content:")
+        print(text)
+        print("===================================\n")
+        return
+
     slack_url = "https://slack.com/api/chat.postMessage"
     headers = {
         "Content-Type": "application/json",
@@ -446,8 +505,10 @@ def post_to_slack(channel: str, text: str, token: str):
 def process_and_post_results(
     org_name: str,
     slack_channel: str,
-    slack_token: str
-):
+    slack_token: str,
+    file_dir: Path,
+    debug: bool = False
+) -> None:
     """
     Processes batch results and posts them to Slack.
     
@@ -455,13 +516,18 @@ def process_and_post_results(
         org_name: GitHub organization name
         slack_channel: Slack channel to post to
         slack_token: Slack API token
+        file_dir: Directory containing the input and output files
+        debug: If True, print messages instead of posting to Slack
     """
+    input_path = file_dir / "batch_input.jsonl"
+    output_path = file_dir / "batch_results.jsonl"
+    
     today_date = datetime.now().strftime("%B %d, %Y")
     issue_url_map = {}
     repo_results = {}
     
     # Create issue URL map
-    with open("batch_input.jsonl", "r") as input_file:
+    with open(input_path, "r") as input_file:
         for line in input_file:
             task = json.loads(line)
             custom_id = task.get("custom_id", "N/A")
@@ -473,7 +539,7 @@ def process_and_post_results(
             )
     
     # Process results and organize by repository
-    with open("batch_results.jsonl", "r") as output_file:
+    with open(output_path, "r") as output_file:
         for line in output_file:
             result = json.loads(line)
             custom_id = result.get("custom_id", "N/A")
@@ -496,22 +562,74 @@ def process_and_post_results(
     # Split into chunks if necessary and post
     chunks = chunk_message(combined_message)
     for chunk in chunks:
-        post_to_slack(slack_channel, chunk, slack_token)
+        post_to_slack(slack_channel, chunk, slack_token, debug=debug)
     
-    print(f"Results have been processed and posted to Slack channel {slack_channel}")
+    if debug:
+        print("Debug mode: Skipped posting to Slack")
+    else:
+        print(f"Updates posted to Slack channel {slack_channel}")
+
+def process_issue_content(issue: dict, input_token_limit: int, headers: dict) -> dict:
+    """
+    Processes an issue's content to fit within token limits, including fetching comments if space allows.
+    
+    Args:
+        issue: Dictionary containing issue data
+        input_token_limit: Maximum number of requested input tokens per request
+        headers: Request headers for GitHub API
+        
+    Returns:
+        dict: Updated issue with processed content including comments 
+    """
+    base_content = f"Repository: {issue['repository_name']}\nTitle: {issue['title']}\nBody: {issue['body']}"
+    base_tokens = calculate_tokens(base_content)
+    
+    if base_tokens > input_token_limit:
+        print(f"Issue {issue['number']} exceeds token limit. Truncating body.")
+        excess_tokens = base_tokens - input_token_limit
+        chars_to_remove = excess_tokens * 4
+        issue['body'] = issue['body'][:-chars_to_remove]
+    else:
+        remaining_tokens = input_token_limit - base_tokens
+        if issue.get("comments", 0) > 0 and remaining_tokens > 0:
+            issue['comments_text'] = fetch_issue_comments(
+                issue.get("comments_url", ""),
+                headers,
+                tokenizer,
+                remaining_tokens
+            )
+    
+    return issue
 
 def main():
     parser = argparse.ArgumentParser(description='GitHub Issue Summarizer')
     parser.add_argument('--config', default='config.yaml',
                        help='Path to the YAML configuration file')
     parser.add_argument('--env', help='Path to the environment file (optional)')
+    parser.add_argument('--no-cleanup', action='store_true',
+                       help='Disable automatic cleanup of old batch files')
+    parser.add_argument('--keep-days', type=int, default=7,
+                       help='Number of days to keep batch files when cleanup is enabled')
+    parser.add_argument('--batch-dir', default='batch_files',
+                       help='Directory to store batch files')
+    parser.add_argument('--debug', action='store_true',
+                       help='Enable debug mode (disable Slack posting)')
     args = parser.parse_args()
     
-    config = load_config(args.config, args.env)
+    try:
+        config = load_config(args.config, args.env)
+    except (yaml.YAMLError, ValueError) as e:
+        print(f"Configuration error: {e}")
+        return
+        
+    if args.keep_days < 0:
+        print("Error: keep-days must be 0 or greater")
+        return
     
     # Create last_run file path from config path
     last_run_file = Path(args.config).with_suffix('.last_run')
     
+    # Fetch issues first
     issues = fetch_github_issues(
         github_token=config['github']['token'],
         owner=config['github']['owner'],
@@ -523,27 +641,44 @@ def main():
         print("No new issues to report")
         return
     
-    tasks = prepare_klusterai_job(
+    headers = {"Authorization": f"token {config['github']['token']}"}
+    input_token_limit = config['limits']['input_tokens']
+    
+    for i in range(len(issues)):
+        issues[i] = process_issue_content(issues[i], input_token_limit, headers)
+    
+    # Prepare and submit the job
+    file_dir = prepare_klusterai_job(
         model=config['klusterai']['model'],
-        github_token=config['github']['token'],
-        input_token_limit=config['limits']['input_tokens'],
-        issues=issues,
-        tokenizer=tokenizer
+        requests=issues,
+        batch_dir=args.batch_dir
     )
     
-    batch_status = submit_klusterai_job(
+    client = OpenAI(
         api_key=config['klusterai']['api_key'],
-        base_url=config['klusterai']['base_url'],
-        tasks=tasks,
-        last_run_file=last_run_file
+        base_url=config['klusterai']['base_url']
     )
+    
+    batch_id = submit_klusterai_job(
+        client=client,
+        last_run_file=last_run_file,
+        file_dir=file_dir
+    )
+    
+    batch_status = monitor_batch_status(client, batch_id)
     
     if batch_status.status.lower() == "completed":
+        retrieve_result_file_contents(batch_status, client, file_dir)
         process_and_post_results(
             org_name=config['github']['owner'],
             slack_channel=config['slack']['channel'],
-            slack_token=config['slack']['token']
+            slack_token=config['slack']['token'],
+            file_dir=file_dir,
+            debug=args.debug
         )
+            
+    if not args.no_cleanup:
+        cleanup_batch_files(args.keep_days, args.batch_dir)
 
 if __name__ == "__main__":
     main()

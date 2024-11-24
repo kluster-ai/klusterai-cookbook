@@ -9,6 +9,98 @@ This guide will help you set up a Slack bot that leverages kluster.ai's Batch AP
 
 The bot posts these summaries to a designated Slack channel, helping your team stay up to date on busy repos.
 
+Before diving into the setup, let's understand the batch processing workflow, or if you already know, you can [skip straight to the setup instructions](#setup-instructions)!
+
+## How Batch Processing Works
+
+New to using Batch APIs? Think of it like sending a big batch of laundry to be cleaned, rather than washing one item at a time. Here's how it works:
+
+1. **Create and Upload Your Request File**
+First, you create a JSONL file (think: JSON, but one complete request per line). Here's what it looks like:
+
+```json
+{
+    "custom_id": "issue-1",
+    "method": "POST",
+    "url": "/v1/chat/completions",
+    "body": {
+        "model": "klusterai/Meta-Llama-3.1-405B-Instruct-Turbo",
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a helpful assistant that summarizes GitHub issues."
+            },
+            {
+                "role": "user",
+                "content": "Repository: klusterai-cookbook. Title: Issue rendering notebooks on small screens. Body:Tested on a bunch of phones and tablets.1. Comments: Happens for me too on...."
+            }
+        ]
+    }
+}
+```
+
+The actual JSONL file will contain multiple requests, one per line. For example:
+```json
+{"custom_id": "issue-1", "method": "POST", ...}
+{"custom_id": "issue-2", "method": "POST", ...}
+{"custom_id": "issue-3", "method": "POST", ...}
+```
+
+Then upload and submit it:
+```python
+def submit_klusterai_job(client: OpenAI, last_run_file: Path, file_dir: Path) -> str:
+    # Upload your JSONL file of requests
+    batch_input_file = client.files.create(
+        file=open(input_path, "rb"),
+        purpose="batch"    # Tell kluster.ai this is for batch processing
+    )
+    
+    # Start the batch job - it will process all requests in your file
+    response = client.batches.create(
+        input_file_id=batch_input_file.id,
+        endpoint="/v1/chat/completions",
+        completion_window="24h",    # Job will complete within 24 hours
+    )
+    return response.id
+```
+
+2. **Watch Your Job's Progress**
+Like tracking a delivery, you can monitor how many requests have been processed:
+```python
+def monitor_batch_status(client, batch_id: str, interval: int = 10) -> dict:
+    while True:
+        batch_status = client.batches.retrieve(batch_id)
+        # Shows progress like: "Completed requests: 45 / 100"
+        print(f"Completed requests: {batch_status.request_counts.completed} / {batch_status.request_counts.total}")
+
+        # Check if job is done (or had problems)
+        if batch_status.status.lower() in ["completed", "failed", "canceled"]:
+            break
+        time.sleep(interval)    # Wait 10 seconds before checking again
+    return batch_status
+```
+
+3. **Get Your Results**
+When complete, you'll get back a JSONL file with all your results:
+```python
+def retrieve_result_file_contents(batch_status, client, file_dir: Path) -> Path:
+    # Download your results file
+    result_file_id = batch_status.output_file_id
+    results = client.files.content(result_file_id).content
+    
+    # Save to your computer
+    result_path = file_dir / "batch_results.jsonl"
+    with open(result_path, "wb") as file:
+        file.write(results)
+```
+
+The results file will look something like this:
+```json
+{"id": "1a3157a8", "custom_id": "issue-1", "response": {"status_code": 200, "body": {"choices": [{"message": {"content": "*TL;DR Summary*: Crashing becoming more common..."}}]}}}
+{"id": "2b4268b9", "custom_id": "issue-2", "response": {"status_code": 200, "body": {"choices": [{"message": {"content": "*TL;DR Summary*: Users having issues logging in recently..."}}]}}}
+....
+```
+
 ## Setup Instructions
 
 ### 1. Repository Setup
@@ -105,7 +197,7 @@ kluster:
 
 github:
   owner: "your-github-org"
-  repo: null
+  repo: "your-github-repo"
 
 slack:
   channel: "your-slack-channel"
@@ -116,7 +208,7 @@ limits:
 
 Note: You can choose between two modes:
 - **Single Repository**: Set a specific repository name in the `repo` field
-- **Organization-wide**: Leave the `repo` field as `null` to process issues from all repositories in your organization
+- **Organization-wide**: Remove the `repo` field to process issues from all repositories in your organization
 
 ### 5. Try!
 Before setting up automation, let's test the script manually:
@@ -165,14 +257,14 @@ chmod +x run_github_report.sh
 Add a cron job to run the script periodically:
 ```bash
 # Example: Run daily at 9 AM
-0 9 * * * /path/to/where/you/cloned/github-summarizer/run_github_report.sh
+0 9 * * * /path/to/where/you/cloned/github-summarizer/run_github_report.sh 
 ```
 
 ## How It Works
-This app is composed of just a few simple steps.
+This app processes GitHub issues in a few key steps:
 
 ### 1. Fetch Issues
-The script checks for new or updated GitHub issues since the last run.
+The script checks for new or updated GitHub issues since the last run. It can either monitor a single repository or all repositories in an organization.
 
 ```python
 def fetch_github_issues(
@@ -189,55 +281,83 @@ def fetch_github_issues(
     
     for repo in repos_to_check:
         github_url = f"https://api.github.com/repos/{owner}/{repo}/issues"
-      // ................ more ................
-    
+        # Fetches issues and their comments, respecting token limits
+        # Returns list of issues with their content
 ```
 
-### 2. Prepare Batch Job
-Each issue is prepared for summarization, including its title, body, and comments.
+### 2. Process GitHub Post and Comments
+Each issue's content (title, body, and comments) is processed to fit within token limits. Comments are included if space allows after the main content.
+
+```python
+def process_issue_content(issue: dict, input_token_limit: int, headers: dict) -> dict:
+    base_content = f"Repository: {issue['repository_name']}\nTitle: {issue['title']}\nBody: {issue['body']}"
+    base_tokens = calculate_tokens(base_content)
+    
+    if base_tokens > input_token_limit:
+        # Truncate if needed
+        print(f"Issue {issue['number']} exceeds token limit. Truncating body.")
+    else:
+        # Fetch comments if space allows
+        remaining_tokens = input_token_limit - base_tokens
+        if issue.get("comments", 0) > 0 and remaining_tokens > 0:
+            issue['comments_text'] = fetch_issue_comments(...)
+```
+
+### 3. Prepare and Submit Batch Job
+The processed issues are formatted into a batch job for kluster.ai's API. Each issue becomes a task in the batch, with proper prompting for summarization.
 
 ```python
 def prepare_klusterai_job(
     model: str,
-    github_token: str,
-    input_token_limit: int,
-    issues: list,
-    tokenizer
-) -> list:
+    requests: list,
+    batch_dir: str = "batch_files"
+) -> Tuple[list, Path]:
     tasks = []
-    for i, issue in enumerate(issues):
-        title = issue.get("title", "")
-        body = issue.get("body", "")
-        issue_url = issue.get("html_url", "")
-        repo_name = issue.get("repository_name", "")
-        
-      // ................ more ................
+    for request in requests:
+        task = {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "body": {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": "You are a helpful assistant..."},
+                    {"role": "user", "content": f"Repository: {repo_name}\nTitle: {title}\nBody: {body}\nComments: {comments_text}"},
+                ],
+            },
+            "metadata": {
+                "issue_url": issue_url,
+                "title": title,
+                "repo_name": repo_name
+            }
+        }
+        tasks.append(task)
 ```
 
-### 3. Submit Batch Job
-The requests that have just been prepared are are sent to kluster.ai's Batch API for summarization.
+
+### 4. Monitor and Process Results
+Once the batch job completes, the script processes the results, organizing them by repository.
 
 ```python
-def submit_klusterai_job(
-    api_key: str,
-    base_url: str,
-    tasks: list,
-    last_run_file: Path,
-    file_name: str = "batch_input.jsonl"
-) -> dict:
-    with open(file_name, "w") as file:
-        for task in tasks:
-            file.write(json.dumps(task) + "\n")
-
-    client = OpenAI(
-        api_key=api_key,
-        base_url=base_url
-    )
-      // ................ more ................
+def process_and_post_results(
+    org_name: str,
+    slack_channel: str,
+    slack_token: str,
+    file_dir: Path
+) -> None:
+    # Organize results by repository
+    repo_results = {}
+    for result in results:
+        repo_name = result.get("repo_name", "unknown")
+        if repo_name not in repo_results:
+            repo_results[repo_name] = []
+        
+        repo_results[repo_name].append(
+            f"*Title:* <{issue_url}|[{title}]>\n{summary}\n"
+        )
 ```
 
-### 4. Post to Slack
-Summaries are formatted and posted to your Slack channel.
+### 5. Post to Slack
+Finally, the organized summaries are posted to Slack, grouped by repository for better readability.
 
 ```python
 def post_to_slack(channel: str, text: str, token: str):
@@ -257,18 +377,19 @@ def post_to_slack(channel: str, text: str, token: str):
             "unfurl_links": False,
             "unfurl_media": False
         }
-      // ................ more ................
 ```
+
+The script also includes automatic cleanup of old batch files if requested.
 
 ## Organization-wide Summaries
 
 This tool can monitor issues across all repositories in your GitHub organization. To enable this:
 
-1. Set the `repo` field to null in your `config.yaml`:
+1. Remove the repo field in `config.yaml`:
 ```yaml
 github:
   owner: "your-github-org"
-  repo: null
+#   repo: "your-github-repo"
 ```
 
 2. Ensure your GitHub token has appropriate permissions:

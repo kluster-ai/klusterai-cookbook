@@ -4,7 +4,7 @@ klusterai:
 
 github:
   owner: "ADD-YOUR-OWNER-HERE"
-  repo: null
+  repo: "YOUR-REPO-HERE" # remove this line if you want to process all repos
 
 slack:
   channel: "ADD-YOUR-CHANNEL-HERE"
