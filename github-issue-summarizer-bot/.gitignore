@@ -6,3 +6,4 @@
 .last_run
 .last_run*
 config*
+!config.template.yaml
