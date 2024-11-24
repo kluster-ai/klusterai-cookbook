@@ -125,7 +125,7 @@ def get_last_run_time(last_run_file: Path) -> datetime:
             return datetime.fromtimestamp(float(timestamp))
     except (FileNotFoundError, ValueError):
         # If file doesn't exist or is invalid, default to 24 hours ago
-        return datetime.now() - timedelta(days=2)
+        return datetime.now() - timedelta(days=1)
 
 def update_last_run_time(last_run_file: Path):
     """
