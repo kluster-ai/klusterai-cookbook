@@ -38,6 +38,12 @@ def load_config(config_path: str = 'config.yaml', env_path: str = None):
     config['github']['token'] = os.getenv("GH_TOKEN")
     config['slack']['token'] = os.getenv("SLACK_TOKEN")
     
+    # Add a default token limit if not specified in config
+    if 'limits' not in config:
+        config['limits'] = {}
+    if 'input_tokens' not in config['limits']:
+        config['limits']['input_tokens'] = 100000
+    
     return config
 
 def setup_tokenizer():
@@ -59,18 +65,16 @@ def calculate_tokens(text, tokenizer):
     """
     return len(tokenizer.encode(text))
 
-def get_last_run_time(config_path: str = 'config.yaml') -> datetime:
+def get_last_run_time(last_run_file: Path) -> datetime:
     """
-    Retrieves the timestamp of the last successful run for a specific config.
+    Retrieves the timestamp of the last successful run.
     
     Args:
-        config_path: Path to the config file to create unique last_run file
+        last_run_file: Path to the file storing the last run timestamp
         
     Returns:
         datetime: Timestamp of last run, or 24 hours ago if no record exists
     """
-    # Create a last_run file specific to this config
-    last_run_file = Path(config_path).with_suffix('.last_run')
     try:
         with open(last_run_file, 'r') as f:
             timestamp = float(f.read().strip())
@@ -79,14 +83,13 @@ def get_last_run_time(config_path: str = 'config.yaml') -> datetime:
         # If file doesn't exist or is invalid, default to 24 hours ago
         return datetime.now() - timedelta(days=1)
 
-def update_last_run_time(config_path: str = 'config.yaml'):
+def update_last_run_time(last_run_file: Path):
     """
-    Updates the last run timestamp for a specific config file.
+    Updates the last run timestamp.
     
     Args:
-        config_path: Path to the config file to create unique last_run file
+        last_run_file: Path to store the timestamp
     """
-    last_run_file = Path(config_path).with_suffix('.last_run')
     with open(last_run_file, 'w') as f:
         f.write(str(time.time()))
 
@@ -130,32 +133,35 @@ def fetch_org_repos(owner: str, headers: dict) -> list:
             
     return repos
 
-def fetch_github_issues(config: dict, config_path: str = 'config.yaml') -> list:
+def fetch_github_issues(
+    github_token: str,
+    owner: str,
+    repo: str | None,
+    last_run_file: Path
+) -> list:
     """
     Fetches GitHub issues created or updated since the last run time.
-    If no specific repo is configured, fetches from all repos in the org.
     
     Args:
-        config_path: Path to the config file for unique last_run tracking
-        
-    Returns:
-        list: List of GitHub issue objects containing title, body, comments_url, etc.
+        github_token: GitHub authentication token
+        owner: GitHub organization/owner name
+        repo: Specific repository name or None to fetch from all repos
+        last_run_file: Path to the file storing last run timestamp
     """
-    since = get_last_run_time(config_path)
-    headers = {"Authorization": f"token {config['github']['token']}"}
+    since = get_last_run_time(last_run_file)
+    headers = {"Authorization": f"token {github_token}"}
     
     all_issues = []
     repos_to_check = []
     
-    # If specific repo is configured, use it; otherwise fetch all org repos
-    if config['github']['repo']:
-        repos_to_check = [config['github']['repo']]
+    if repo:
+        repos_to_check = [repo]
     else:
-        repos_to_check = fetch_org_repos(config['github']['owner'], headers)
+        repos_to_check = fetch_org_repos(owner, headers)
         print(f"Found {len(repos_to_check)} repositories in organization")
     
     for repo in repos_to_check:
-        github_url = f"https://api.github.com/repos/{config['github']['owner']}/{repo}/issues"
+        github_url = f"https://api.github.com/repos/{owner}/{repo}/issues"
         params = {"since": since.isoformat()}
         page = 1
         
@@ -183,7 +189,7 @@ def fetch_github_issues(config: dict, config_path: str = 'config.yaml') -> list:
     
     return all_issues
 
-def fetch_issue_comments(comments_url: str, headers: dict, tokenizer) -> str:
+def fetch_issue_comments(comments_url: str, headers: dict, tokenizer, token_limit: int) -> str:
     """
     Retrieves and concatenates comments for a GitHub issue, respecting token limits.
     
@@ -191,6 +197,7 @@ def fetch_issue_comments(comments_url: str, headers: dict, tokenizer) -> str:
         comments_url: URL endpoint for the issue's comments
         headers: Request headers including authentication
         tokenizer: Tokenizer instance for calculating token counts
+        token_limit: Maximum number of tokens allowed
         
     Returns:
         str: Concatenated comments text, separated by '---'
@@ -204,7 +211,7 @@ def fetch_issue_comments(comments_url: str, headers: dict, tokenizer) -> str:
         current_tokens = calculate_tokens(comments_text, tokenizer)
         new_comment_tokens = calculate_tokens(comment_body, tokenizer)
         
-        if current_tokens + new_comment_tokens > INPUT_TOKEN_LIMIT:
+        if current_tokens + new_comment_tokens > token_limit:
             print("Token limit reached for comments.")
             break
         
@@ -214,16 +221,22 @@ def fetch_issue_comments(comments_url: str, headers: dict, tokenizer) -> str:
     
     return comments_text
 
-def prepare_klusterai_job(config: dict, issues: list, tokenizer) -> list:
+def prepare_klusterai_job(
+    model: str,
+    github_token: str,
+    input_token_limit: int,
+    issues: list,
+    tokenizer
+) -> list:
     """
     Prepares a list of requests for kluster.ai batch processing.
     
     Args:
+        model: The model to use for processing
+        github_token: GitHub token for fetching comments
+        input_token_limit: Maximum number of tokens allowed
         issues: List of GitHub issues
         tokenizer: Tokenizer instance for text processing
-        
-    Returns:
-        List of task dictionaries ready for batch processing
     """
     tasks = []
     for i, issue in enumerate(issues):
@@ -236,8 +249,9 @@ def prepare_klusterai_job(config: dict, issues: list, tokenizer) -> list:
         if issue.get("comments", 0) > 0:
             comments_text = fetch_issue_comments(
                 issue.get("comments_url", ""),
-                {"Authorization": f"token {config['github']['token']}"},
-                tokenizer
+                {"Authorization": f"token {github_token}"},
+                tokenizer,
+                input_token_limit
             )
 
         task = {
@@ -245,7 +259,7 @@ def prepare_klusterai_job(config: dict, issues: list, tokenizer) -> list:
             "method": "POST",
             "url": "/v1/chat/completions",
             "body": {
-                "model": config['klusterai']['model'],
+                "model": model,
                 "messages": [
                     {"role": "system", "content": (
                         "You are a helpful assistant that summarizes GitHub issues. "
@@ -267,17 +281,22 @@ def prepare_klusterai_job(config: dict, issues: list, tokenizer) -> list:
         tasks.append(task)
     return tasks
 
-def submit_klusterai_job(config: dict, tasks: list, config_path: str = 'config.yaml', file_name: str = "batch_input.jsonl"):
+def submit_klusterai_job(
+    api_key: str,
+    base_url: str,
+    tasks: list,
+    last_run_file: Path,
+    file_name: str = "batch_input.jsonl"
+) -> dict:
     """
     Submits a batch processing job to kluster.ai and monitors its completion.
     
     Args:
+        api_key: Kluster.ai API key
+        base_url: Kluster.ai base URL
         tasks: List of task dictionaries to process
-        config_path: Path to the config file for unique last_run tracking
+        last_run_file: Path to the file storing last run timestamp
         file_name: Name of the temporary JSONL file to store tasks
-        
-    Returns:
-        BatchStatus: Object containing the final status of the batch job
     """
     # Save tasks to file
     with open(file_name, "w") as file:
@@ -285,8 +304,8 @@ def submit_klusterai_job(config: dict, tasks: list, config_path: str = 'config.y
             file.write(json.dumps(task) + "\n")
 
     client = OpenAI(
-        api_key=config['klusterai']['api_key'],
-        base_url=config['klusterai']['base_url']
+        api_key=api_key,
+        base_url=base_url
     )
 
     # Upload batch file
@@ -304,9 +323,9 @@ def submit_klusterai_job(config: dict, tasks: list, config_path: str = 'config.y
     )
     print(f"Batch request submitted. Batch ID: {response.id}")
 
-    # Update the last run time with the specific config
-    update_last_run_time(config_path) 
-
+    # Update the last run time
+    update_last_run_time(last_run_file)
+    
     # Monitor batch status
     while True:
         batch_status = client.batches.retrieve(response.id)
@@ -424,10 +443,18 @@ def post_to_slack(channel: str, text: str, token: str):
         if len(chunks) > 1:
             time.sleep(1)
 
-def process_and_post_results(config: dict):
+def process_and_post_results(
+    org_name: str,
+    slack_channel: str,
+    slack_token: str
+):
     """
     Processes batch results and posts them to Slack.
-    Results are grouped by repository.
+    
+    Args:
+        org_name: GitHub organization name
+        slack_channel: Slack channel to post to
+        slack_token: Slack API token
     """
     today_date = datetime.now().strftime("%B %d, %Y")
     issue_url_map = {}
@@ -459,7 +486,6 @@ def process_and_post_results(config: dict):
             repo_results[repo_name].append(f"*Title:* <{issue_url}|[{title}]>\n{response_content}\n")
     
     # Create combined message grouped by repository
-    org_name = config['github']['owner']
     combined_message = f"*Latest Updates for {org_name} ({today_date})*\n\n"
     
     for repo_name, summaries in repo_results.items():
@@ -470,9 +496,9 @@ def process_and_post_results(config: dict):
     # Split into chunks if necessary and post
     chunks = chunk_message(combined_message)
     for chunk in chunks:
-        post_to_slack(config['slack']['channel'], chunk, config['slack']['token'])
+        post_to_slack(slack_channel, chunk, slack_token)
     
-    print(f"Results have been processed and posted to Slack channel {config['slack']['channel']}")
+    print(f"Results have been processed and posted to Slack channel {slack_channel}")
 
 def main():
     parser = argparse.ArgumentParser(description='GitHub Issue Summarizer')
@@ -481,19 +507,43 @@ def main():
     parser.add_argument('--env', help='Path to the environment file (optional)')
     args = parser.parse_args()
     
-    # Load config based on provided paths
     config = load_config(args.config, args.env)
     
-    issues = fetch_github_issues(config, args.config)
+    # Create last_run file path from config path
+    last_run_file = Path(args.config).with_suffix('.last_run')
+    
+    issues = fetch_github_issues(
+        github_token=config['github']['token'],
+        owner=config['github']['owner'],
+        repo=config['github']['repo'],
+        last_run_file=last_run_file
+    )
+    
     if len(issues) == 0:
         print("No new issues to report")
         return
     
-    tasks = prepare_klusterai_job(config, issues, tokenizer)
-    batch_status = submit_klusterai_job(config, tasks, args.config)
+    tasks = prepare_klusterai_job(
+        model=config['klusterai']['model'],
+        github_token=config['github']['token'],
+        input_token_limit=config['limits']['input_tokens'],
+        issues=issues,
+        tokenizer=tokenizer
+    )
+    
+    batch_status = submit_klusterai_job(
+        api_key=config['klusterai']['api_key'],
+        base_url=config['klusterai']['base_url'],
+        tasks=tasks,
+        last_run_file=last_run_file
+    )
     
     if batch_status.status.lower() == "completed":
-        process_and_post_results(config)
+        process_and_post_results(
+            org_name=config['github']['owner'],
+            slack_channel=config['slack']['channel'],
+            slack_token=config['slack']['token']
+        )
 
 if __name__ == "__main__":
     main()
