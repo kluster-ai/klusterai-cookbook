@@ -40,7 +40,7 @@ or
 docker-compose up -d # for older dockers
 ```
 
-That's it! The bot has built in scheduling will now post daily summaries to your Slack channel. 🎉
+That's it! The bot has built in scheduling will now post periodic summaries to your Slack channel. 🎉
 
 Need the tokens? [Get them here](#getting-required-tokens)
 Want more options? [See advanced configuration](#configuration-options)
