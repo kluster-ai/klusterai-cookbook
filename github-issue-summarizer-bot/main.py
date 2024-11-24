@@ -309,7 +309,7 @@ def prepare_klusterai_job(
                         "For each issue/PR, structure your response as follows:\n"
                         "1. Start with a brief TL;DR (1-2 sentences)\n"
                         "2. Provide a detailed summary of the main points, using only information from the source\n"
-                        "3. If code changes are present, highlight key modifications exactly as shown\n"
+                        "3. If code changes are present, highlight important code samples exactly as shown\n"
                         "4. List any explicitly mentioned action items or pending questions\n"
                         "5. [AI Suggestions] Clearly mark any AI-generated suggestions with this prefix\n\n"
                         "Formatting guidelines:\n"
