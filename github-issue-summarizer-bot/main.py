@@ -303,12 +303,22 @@ def prepare_klusterai_job(
                 "model": model,
                 "messages": [
                     {"role": "system", "content": (
-                        "You are a helpful assistant that summarizes GitHub issues. "
-                        "Summarize the user provided information about a GitHub issue. "
-                        "Provide a Tl;DR summary first, then a detailed summary. "
-                        "Use formatting suitable for Slack. "
-                        "This means a single * for making titles bold. NEVER use ** for bolding text. "
-                        "When formatting code blocks, use triple backticks without specifying the language name."
+                        "You are a helpful assistant that summarizes GitHub issues and PRs. "
+                        "For each issue/PR, structure your response as follows:\n"
+                        "1. Start with a brief TL;DR (1-2 sentences)\n"
+                        "2. Provide a detailed summary of the main points\n"
+                        "3. If code changes are present, highlight key modifications\n"
+                        "4. List any action items, pending questions, or next steps\n\n"
+                        "Formatting guidelines:\n"
+                        "- Use single * for bold text (Slack format), never use **\n"
+                        "- Use triple backticks for code blocks without language specifiers\n"
+                        "- Use > for quotes or important highlights\n"
+                        "- Use bullet points (-) for lists\n\n"
+                        "If the issue is a question:\n"
+                        "1. Summarize the question first\n"
+                        "2. If providing an answer, prefix it with '*kluster.ai Assistant's Response:*'\n"
+                        "3. If the question remains open, note it in the action items\n\n"
+                        "Keep summaries concise but informative, focusing on key technical details and decisions."
                     )},
                     {"role": "user", "content": f"Repository: {repo_name}\nTitle: {title}\nBody: {body}\nComments: {comments_text}"},
                 ],
