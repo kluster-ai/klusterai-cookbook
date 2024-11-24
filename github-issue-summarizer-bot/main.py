@@ -46,7 +46,14 @@ def load_config(config_path: str = 'config.yaml', env_path: str = None):
     if 'processing' not in config:
         config['processing'] = {}
     if 'limits' not in config['processing']:
-        config['processing']['limits'] = {'max_input_tokens_per_request': 100000}
+        config['processing']['limits'] = {}
+    if 'max_input_tokens_per_request' not in config['processing']['limits']:
+        config['processing']['limits']['max_input_tokens_per_request'] = 100000
+    else:
+        max_tokens = config['processing']['limits']['max_input_tokens_per_request']
+        if not isinstance(max_tokens, (int, float)):
+            config['processing']['limits']['max_input_tokens_per_request'] = 100000
+
     if 'batch' not in config['processing']:
         config['processing']['batch'] = {
             'cleanup': True,
