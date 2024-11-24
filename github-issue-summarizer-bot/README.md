@@ -130,9 +130,9 @@ services:
       - GITHUB_REPO=your-repo   # Optional: specific repo (remove for org-wide)
       - SLACK_CHANNEL=your-channel
       # Optional: adjust these as needed
-      - BATCH_CLEANUP=true
+      - BATCH_CLEANUP=true # delete local generated files
       - KEEP_DAYS=7 # days to keep local files
-      - DEBUG=true 
+      - DEBUG=false 
 ```
 
 4. Start the bot:
