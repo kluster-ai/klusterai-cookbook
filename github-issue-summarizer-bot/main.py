@@ -56,6 +56,10 @@ def load_config(config_path: str = 'config.yaml', env_path: str = None):
             'generated_files_directory': 'batch_files',
             'cleanup': True,
             'keep_days': 7
+        },
+        'history': {
+            'default_lookback_hours': 24,
+            'use_last_run_file': True
         }
     }
 
@@ -137,24 +141,32 @@ def calculate_tokens(text):
     """
     return len(tokenizer.encode(text))
 
-def get_last_run_time(last_run_file: Path) -> datetime:
+def get_last_run_time(last_run_file: Path, config: dict) -> datetime:
     """
     Retrieves the timestamp of the last successful run.
     
     Args:
         last_run_file: Path to the file storing the last run timestamp
+        config: Configuration dictionary containing history settings
         
     Returns:
-        datetime: Timestamp of last run, or 24 hours ago if no record exists
+        datetime: Timestamp of last run, or configured time ago if no record exists
     """
-    try:
-        with open(last_run_file, 'r') as f:
-            timestamp = float(f.read().strip())
-            # Convert timestamp to datetime with millisecond precision
-            return datetime.fromtimestamp(float(timestamp))
-    except (FileNotFoundError, ValueError):
-        # If file doesn't exist or is invalid, default to 24 hours ago
-        return datetime.now() - timedelta(days=1)
+    # Check if we should use the last run file
+    if config['processing']['history']['use_last_run_file']:
+        try:
+            with open(last_run_file, 'r') as f:
+                timestamp = float(f.read().strip())
+                print(f"Using last run timestamp: {datetime.fromtimestamp(float(timestamp))}")
+                return datetime.fromtimestamp(float(timestamp))
+        except (FileNotFoundError, ValueError):
+            print("Last run file not found or invalid, falling back to default lookback time")
+    
+    # Use the configured lookback time
+    lookback_hours = config['processing']['history']['default_lookback_hours']
+    lookback_time = datetime.now() - timedelta(hours=lookback_hours)
+    print(f"Using default lookback time: {lookback_time} ({lookback_hours} hours)")
+    return lookback_time
 
 def update_last_run_time(last_run_file: Path):
     """
@@ -210,7 +222,8 @@ def fetch_github_issues(
     github_token: str,
     owner: str,
     repo: str | None,
-    last_run_file: Path
+    last_run_file: Path,
+    config: dict
 ) -> list:
     """
     Fetches GitHub issues created or updated since the last run time.
@@ -220,8 +233,9 @@ def fetch_github_issues(
         owner: GitHub organization/owner name
         repo: Specific repository name or None to fetch from all repos
         last_run_file: Path to the file storing last run timestamp
+        config: Configuration dictionary
     """
-    since = get_last_run_time(last_run_file)
+    since = get_last_run_time(last_run_file, config)
     headers = {"Authorization": f"token {github_token}"}
     
     try:
@@ -692,7 +706,8 @@ def main():
         github_token=config['api']['github']['token'],
         owner=config['api']['github']['owner'],
         repo=config['api']['github']['repo'],
-        last_run_file=last_run_file
+        last_run_file=last_run_file,
+        config=config
     )
     
     if len(issues) == 0:

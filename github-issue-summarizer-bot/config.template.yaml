@@ -14,6 +14,9 @@ processing:
     cleanup: ${BATCH_CLEANUP}
     keep_days: ${KEEP_DAYS}
     generated_files_directory: "batch_files"
+  history:
+    default_lookback_hours: ${DEFAULT_LOOKBACK_HOURS}
+    use_last_run_file: ${USE_LAST_RUN_FILE}
 
 runtime:
   debug: ${DEBUG} 
