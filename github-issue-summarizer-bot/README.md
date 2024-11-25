@@ -55,7 +55,7 @@ Want more options? [See advanced configuration](#configuration-options)
 
 Instead of processing issues one at a time, this bot handles them in batches, which means:
 
-- 🚀 **Efficent Processing**: Rather than making individual API calls for each issue, the batch API allows simultaneous processing of multiple issues in one request
+- 🚀 **Efficient Processing**: Rather than making individual API calls for each issue, the batch API allows simultaneous processing of multiple issues in one request
 - 💰 **Lower Costs**: Batch processing offers better prices and scalability compared to individual API calls
 - 🛡️ **Better Rate Limits**: Real-time APIs often have strict limits on requests/tokens per minute/hour - batch processing helps stay within these constraints
 - 🤖 **Automated Workflows**: Set it and forget it - the bot automatically collects new issues since its last run and processes them in batches
