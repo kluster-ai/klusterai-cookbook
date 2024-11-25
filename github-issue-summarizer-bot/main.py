@@ -489,13 +489,13 @@ def retrieve_result_file_contents(batch_status, client, file_dir: Path) -> Path:
         file.write(results)
     print(f"\nResults saved to {result_path}")
 
-def chunk_message(text: str, limit: int = 40000) -> list:
+def chunk_message(text: str, limit: int = 35000) -> list:
     """
     Splits a message into chunks of specified size limit.
     
     Args:
         text: Message text to split
-        limit: Character limit per message (default 40000)
+        limit: Character limit per message (default 35000)
         
     Returns:
         list: List of message chunks
@@ -614,7 +614,7 @@ def process_and_post_results(
             if repo_name not in repo_results:
                 repo_results[repo_name] = []
             
-            repo_results[repo_name].append(f"*Title:* <{issue_url}|[{title}]>\n{response_content}\n")
+            repo_results[repo_name].append(f"*Title:* <{issue_url}|[{title}]>\n{response_content}\n──────────────────────────────────────\n\n")
     
     # Create combined message grouped by repository
     combined_message = f"*Latest Updates for {org_name} ({today_date})*\n\n"
@@ -622,7 +622,7 @@ def process_and_post_results(
     for repo_name, summaries in repo_results.items():
         combined_message += f"*Repository: {repo_name}*\n"
         combined_message += "".join(summaries)
-        combined_message += "\n"
+        combined_message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
     
     # Split into chunks if necessary and post
     chunks = chunk_message(combined_message)
