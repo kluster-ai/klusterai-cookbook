@@ -1,10 +1,10 @@
 api:
   klusterai:
-    base_url: "http://api.kluster.ai/v1"
+    base_url: "https://api.kluster.ai/v1"
     model: "klusterai/Meta-Llama-3.1-405B-Instruct-Turbo"
   github:
     owner: your-org-name
-    repo: optional-specific-repo  # remove for all repos
+    repo: your-repo-name #remove for all repos
   slack:
     channel: your-channel-name
 
@@ -15,6 +15,9 @@ processing:
     cleanup: true
     keep_days: 7
     generated_files_directory: batch_files
+  history:
+    default_lookback_hours: 24
+    use_last_run_file: true
 
 runtime:
-  debug: true
+  debug: false

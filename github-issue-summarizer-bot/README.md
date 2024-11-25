@@ -180,13 +180,17 @@ When running with Docker Compose, you can configure the bot using environment va
 |----------|-------------|---------|
 | CRON_SCHEDULE | When to run the bot (cron syntax) | `0 9 * * *` (9 AM daily) |
 | RUN_NOW | Run immediately on startup | `true` |
-| GITHUB_ORG | A GitHub organization to monitor| Required |
+| GITHUB_ORG | A GitHub organization to monitor | Required |
 | GITHUB_REPO | Specific repository to monitor | Optional |
 | SLACK_CHANNEL | Slack channel for summaries | Required |
-| MAX_INPUT_TOKENS_PER_REQUEST | maximum input token limit per request | 100000 |
+| MAX_INPUT_TOKENS_PER_REQUEST | Maximum input token limit per request | 100000 |
 | BATCH_CLEANUP | Clean up old local batch files | `true` |
-| KEEP_DAYS | Days to keep blocal atch files | 7 |
+| KEEP_DAYS | Days to keep local batch files | 7 |
 | DEBUG | Print to console instead of Slack | `false` |
+| DEFAULT_LOOKBACK_HOURS | Hours to look back for issues if no last run file | 24 |
+| USE_LAST_RUN_FILE | Whether to use last run timestamp file | `true` |
+| KLUSTERAI_BASE_URL | Base URL for kluster.ai API | `https://api.kluster.ai/v1` |
+| KLUSTERAI_MODEL | Model to use | `klusterai/Meta-Llama-3.1-405B-Instruct-Turbo` |
 
 ### Scheduling Options
 
