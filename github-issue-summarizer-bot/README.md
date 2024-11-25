@@ -48,8 +48,8 @@ Want more options? [See advanced configuration](#configuration-options)
 ## How It Works
 
 1. The bot periodically checks your GitHub repositories for new issues and pull requests
-2. It uses kluster.ai's Batch API (powered by Meta Llama 3.1 405B) to create summaries
-3. Summaries are automatically posted to your Slack channels
+2. It uses kluster.ai's Batch API (powered by Meta Llama 3.1 405B) to create summaries and provide feedback
+3. Summaries and feedback are automatically posted to your Slack channels
 
 ## Why Batch Processing?
 
