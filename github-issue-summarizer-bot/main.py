@@ -266,7 +266,7 @@ def fetch_github_issues(
                 print(f"Error fetching GitHub issues for repo {repo}: {e}")
                 break  
                 
-        print(f"Found {len(repo_issues)} issues in {repo}")
+        print(f"Found {len(repo_issues)} issues/PRs in {repo}")
         all_issues.extend(repo_issues) 
     
     return all_issues
@@ -666,7 +666,8 @@ def process_issue_content(issue: dict, max_input_tokens_per_request: int, header
     return issue
 
 def main():
-    parser = argparse.ArgumentParser(description='GitHub Issue Summarizer')
+    print("\n=== GitHub Issue/PR Summarizer Starting ===")
+    parser = argparse.ArgumentParser(description='GitHub Issue/PR Summarizer')
     parser.add_argument('--config', default='config.yaml',
                        help='Path to the YAML configuration file')
     parser.add_argument('--env', help='Path to the environment file (optional)')
@@ -674,6 +675,10 @@ def main():
     
     try:
         config = load_config(args.config, args.env)
+        print(f"\nConfiguration loaded successfully")
+        print(f"- Organization: {config['api']['github']['owner']}")
+        print(f"- Target repo: {config['api']['github']['repo'] or 'All repos'}")
+        print(f"- Slack channel: {config['api']['slack']['channel']}")
     except (yaml.YAMLError, ValueError) as e:
         print(f"Configuration error: {e}")
         return
@@ -682,6 +687,7 @@ def main():
     last_run_file = Path(args.config).with_suffix('.last_run')
     
     # Fetch issues first
+    print(f"\nFetching GitHub issues/PRs since last run...")
     issues = fetch_github_issues(
         github_token=config['api']['github']['token'],
         owner=config['api']['github']['owner'],
@@ -690,25 +696,33 @@ def main():
     )
     
     if len(issues) == 0:
-        print("No new issues to report")
+        print("No new updates to report")
         return
     
+    print(f"Found {len(issues)} issues/PRs to process")
+    
+    # Before processing content
+    print("\nProcessing issue/PR content and comments...")
     headers = {"Authorization": f"token {config['api']['github']['token']}"}
    
     for i in range(len(issues)):
+        print(f"Processing issue {i+1}/{len(issues)}: {issues[i].get('title', 'No title')[:60]}...")
         issues[i] = process_issue_content(
             issues[i], 
             config['processing']['limits']['max_input_tokens_per_request'], 
             headers
         )
     
-    # Prepare and submit the job
+    # Before preparing job
+    print("\nPreparing kluster.ai batch job...")
     file_dir = prepare_klusterai_job(
         model=config['api']['klusterai']['model'],
         requests=issues,
         batch_dir=config['processing']['batch']['generated_files_directory']
     )
     
+    # Before submitting job
+    print("\nSubmitting batch job to kluster.ai...")
     client = OpenAI(
         api_key=config['api']['klusterai']['key'],
         base_url=config['api']['klusterai']['base_url']
@@ -720,10 +734,13 @@ def main():
         file_dir=file_dir
     )
     
+    print("\nMonitoring batch job status...")
     batch_status = monitor_batch_status(client, batch_id)
     
     if batch_status.status.lower() == "completed":
+        print("\nBatch job completed successfully")
         retrieve_result_file_contents(batch_status, client, file_dir)
+        print("\nPosting results to Slack...")
         process_and_post_results(
             org_name=config['api']['github']['owner'],
             slack_channel=config['api']['slack']['channel'],
@@ -731,12 +748,17 @@ def main():
             file_dir=file_dir,
             debug=config['runtime']['debug']
         )
+    else:
+        print(f"\nBatch job failed with status: {batch_status.status}")
             
     if config['processing']['batch']['cleanup']:
+        print("\nCleaning up batch files...")
         cleanup_batch_files(
             keep_days=config['processing']['batch']['keep_days'],
             batch_dir=config['processing']['batch']['generated_files_directory']
         )
+
+    print("\n=== GitHub Issue/PR Summarizer Completed ===\n")
 
 if __name__ == "__main__":
     main()
