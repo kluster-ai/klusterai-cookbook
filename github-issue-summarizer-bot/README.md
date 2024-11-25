@@ -1,4 +1,4 @@
-# GitHub Issue & PR Summarizer: AI-Powered Slack Updates by kluster.ai
+# GitHub Issue & PR Summaries and Feedback: AI-Powered Slack Updates by kluster.ai
 
 This Slack bot helps engineering teams stay on top of their GitHub issues and pull requests by automatically providing periodic AI-powered summaries and feedback directly in Slack. Perfect for:
 
