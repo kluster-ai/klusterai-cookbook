@@ -139,7 +139,7 @@ def calculate_tokens(text):
     Returns:
         int: Number of tokens in the text
     """
-    return len(tokenizer.encode(text))
+    return len(tokenizer.encode(text, disallowed_special=()))
 
 def get_last_run_time(last_run_file: Path, config: dict) -> datetime:
     """
@@ -579,7 +579,7 @@ def post_to_slack(channel: str, text: str, token: str, debug: bool = False):
         
         # Add a small delay between chunks to avoid rate limiting
         if len(chunks) > 1:
-            time.sleep(1)
+            time.sleep(10)
 
 def process_and_post_results(
     org_name: str,
