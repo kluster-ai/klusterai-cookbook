@@ -1,0 +1,17 @@
+services:
+  klusterai-github-summary-bot:
+    build: .
+    env_file:
+      - .env
+    environment:
+      - GITHUB_ORG=TODO-SET-THIS
+      - SLACK_CHANNEL=TODO-SET-THIS
+      # - GITHUB_REPO=specific_repo  # Comment out for org-wide summaries
+      - CRON_SCHEDULE=0 9 * * *  # run daily at 9am
+      - RUN_NOW=true            # run immediately when container starts
+      - KLUSTERAI_BASE_URL=https://api.kluster.ai/v1
+      - KLUSTERAI_MODEL=klusterai/Meta-Llama-3.1-405B-Instruct-Turbo
+      - BATCH_CLEANUP=true
+      - KEEP_DAYS=7
+      - DEBUG=false
+
