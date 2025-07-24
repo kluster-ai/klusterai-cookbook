@@ -1,9 +1,0 @@
-.env
-.env*
-.venv
-.batch_input.json
-.batch_output.json
-.last_run
-.last_run*
-config*
-!config.template.yaml
